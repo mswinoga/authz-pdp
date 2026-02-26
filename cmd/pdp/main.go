@@ -42,13 +42,7 @@ type server struct {
 func main() {
 	flag.Parse()
 
-	if *policyFile == "" {
-		log.Fatal("-policy-file is required")
-	}
-	if *jwtMetadataKey == "" {
-		log.Fatal("-jwt-metadata-key is required")
-	}
-
+	// logsetup.Parse runs before the structured logger exists; stdlib log is the only option here.
 	logCfg, err := logsetup.Parse(*logLevelFlag)
 	if err != nil {
 		log.Fatalf("invalid -log-level: %v", err)
@@ -60,7 +54,26 @@ func main() {
 		"policy": logsetup.Build("policy", logCfg, base),
 		"input":  logsetup.Build("input", logCfg, base),
 	}
-	slog.SetDefault(loggers["server"])
+	serverLog := loggers["server"]
+	slog.SetDefault(serverLog)
+
+	// Validate required flags with the structured logger so errors appear in JSON.
+	if *policyFile == "" {
+		serverLog.Error("missing required flag", "flag", "-policy-file")
+		os.Exit(1)
+	}
+	if *jwtMetadataKey == "" {
+		serverLog.Error("missing required flag", "flag", "-jwt-metadata-key")
+		os.Exit(1)
+	}
+
+	// Log full startup configuration before touching any external resources.
+	serverLog.Info("starting",
+		"policy-file", *policyFile,
+		"jwt-metadata-key", *jwtMetadataKey,
+		"port", *port,
+		"log-level", *logLevelFlag,
+	)
 
 	actorpkg.SetLogger(loggers["input"])
 	subjectpkg.SetLogger(loggers["input"])
@@ -68,42 +81,42 @@ func main() {
 
 	p, err := policy.LoadFile(*policyFile, loggers["policy"])
 	if err != nil {
-		log.Fatalf("load policy: %v", err)
+		serverLog.Error("load policy failed", "error", err)
+		os.Exit(1)
 	}
 
 	ev, err := cel.NewEvaluator(p, loggers["cel"])
 	if err != nil {
-		log.Fatalf("compile policy: %v", err)
+		serverLog.Error("compile policy failed", "error", err)
+		os.Exit(1)
 	}
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
-		log.Fatalf("listen: %v", err)
+		serverLog.Error("listen failed", "error", err)
+		os.Exit(1)
 	}
 
 	grpcServer := grpc.NewServer()
 	envoy_auth.RegisterAuthorizationServer(grpcServer, &server{
 		evaluator:      ev,
 		jwtMetadataKey: *jwtMetadataKey,
-		logger:         loggers["server"],
+		logger:         serverLog,
 	})
 
-	loggers["server"].Info("listening",
-		"addr", lis.Addr().String(),
-		"policy", *policyFile,
-		"jwt-metadata-key", *jwtMetadataKey,
-	)
+	serverLog.Info("listening", "addr", lis.Addr().String())
 
 	go func() {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
 		<-c
-		loggers["server"].Info("shutting down")
+		serverLog.Info("shutting down")
 		grpcServer.GracefulStop()
 	}()
 
 	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("serve: %v", err)
+		serverLog.Error("serve failed", "error", err)
+		os.Exit(1)
 	}
 }
 
