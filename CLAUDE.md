@@ -174,10 +174,10 @@ Policy structure:
 version: 1
 rules:
   - id: deny-no-identity
-    deny: actor == null || subject.jwt == null
+    deny: actor == null || !has(subject.jwt)
 
   - id: allow-admin
-    allow: subject.jwt != null && "order:admin" in subject.jwt["scopes"]
+    allow: has(subject.jwt) && "order:admin" in subject.jwt["scopes"]
 
   - id: allow-order_get-readonly
     allow: actor != null && actor.cn == "svc-a" &&
@@ -185,7 +185,7 @@ rules:
            operation.id in ["Order_Get", "Order_List"]
 
   - id: deny-all
-    deny: true
+    deny: "true"
 ```
 
 
@@ -230,7 +230,7 @@ immediately — evaluation does not continue to the next rule.
 
 ```cel
 actor != null && actor.cn == "svc-a"
-subject.jwt != null && subject.jwt["sub"] == "user@example.com"
+has(subject.jwt) && subject.jwt["sub"] == "user@example.com"
 ```
 
 **Pattern 2 — Early-exit establishment** (a preceding deny rule guarantees
@@ -238,7 +238,7 @@ non-nullness for all subsequent rules):
 
 ```yaml
 - id: deny-no-identity
-  deny: actor == null || subject.jwt == null   # fires first; null never reaches below
+  deny: actor == null || !has(subject.jwt)     # fires first; null never reaches below
 
 - id: allow-svc-a                              # safe: null already denied above
   allow: actor.cn == "svc-a" && ...
@@ -342,12 +342,16 @@ Never:
 
 # 6. Implementation Structure
 
+> Detailed implementation plan: [docs/implementation-plan.md](docs/implementation-plan.md)
+
 ```text
 cmd/pdp/main.go        – gRPC server + wiring
 pdp/model/actor/       – actor/certificate parsing
 pdp/model/subject/     - subject/jwt parsing
 pdp/model/operation/   - operation parsing
 pdp/cel/               – CEL evaluator
+├── internal/
+│   └── logsetup/           named-logger level parsing and construction
 ```
 
 Core flow inside `Check()` function implemented in main.go:
@@ -376,7 +380,55 @@ These must not be violated:
 
 ---
 
-# 8. Architecture Decision Records
+# 8. Logging
+
+## Named loggers
+
+Each component writes to a named `log/slog` logger. Records include a `"logger"` key with the component name.
+
+| Name | Component | Key events |
+|------|-----------|------------|
+| `server` | `cmd/pdp` | startup flags, listen address, per-request audit decision, shutdown |
+| `cel` | `pdp/cel` | compiled N rules (INFO); per-rule result (DEBUG); CEL eval error (WARN) |
+| `policy` | `pdp/policy` | policy loaded: path, version, rule count (INFO); validation error (ERROR) |
+| `input` | `pdp/model/actor`, `pdp/model/subject`, `pdp/model/operation` | actor parse failure (WARN); jwt/operation metadata absent (DEBUG) |
+
+## Log level flag
+
+```
+-log-level=<default>[,<logger>:<level>,...]
+```
+
+Examples:
+
+```
+-log-level=info                          # all loggers at INFO
+-log-level=warn,cel:debug                # warn globally; CEL per-rule trace enabled
+-log-level=info,cel:debug,policy:warn    # three-way override
+```
+
+Valid levels: `debug`, `info`, `warn`, `error` (case-insensitive).
+
+## Audit log (per request, INFO)
+
+One structured line per request logged by the `server` logger:
+
+```json
+{"logger":"server","msg":"decision","actor_cn":"svc-a","resource":"/v1/orders","action":"GET","rule":"allow-service-readonly","allow":true}
+```
+
+`actor_cn` is `""` when actor is null (no peer certificate). `rule` is `""` when no rule matched or a CEL error occurred.
+
+## Security constraints
+
+- JWT claim values are never logged.
+- Certificate DER/PEM content is never logged.
+- Only `actor.cn` is logged (not `auid`, not full DN).
+- `resource` and `action` are HTTP transport metadata and are safe to log.
+
+---
+
+# 9. Architecture Decision Records
 
 | ADR | Title | Status |
 |-----|-------|--------|
@@ -384,7 +436,7 @@ These must not be violated:
 
 ---
 
-# 9. Non-Goals (Current MVP)
+# 10. Non-Goals (Current MVP)
 
 Not implemented:
 
@@ -393,11 +445,10 @@ Not implemented:
 - Multiple named policies
 - Delegation modeling (OBO)
 - Metrics / tracing
-- Audit logging
 
 ---
 
-# 10. Future Directions
+# 11. Future Directions
 
 Likely next architectural extensions:
 
@@ -407,7 +458,7 @@ Likely next architectural extensions:
 
 ---
 
-# 11. Design Principles
+# 12. Design Principles
 
 - Deterministic evaluation
 - No network I/O in request path

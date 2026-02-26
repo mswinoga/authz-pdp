@@ -1,0 +1,16 @@
+version: 1
+rules:
+  - id: deny-no-identity
+    deny: actor == null || !has(subject.jwt)
+
+  - id: allow-admin
+    allow: has(subject.jwt) && "order:admin" in subject.jwt["scopes"]
+
+  - id: allow-service-readonly
+    allow: actor != null &&
+           actor.cn == "svc-a" &&
+           actor.auid == "ap12345" &&
+           operation.id in ["Order_Get", "Order_List"]
+
+  - id: deny-all
+    deny: "true"
