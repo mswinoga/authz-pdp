@@ -4,7 +4,7 @@
 
 This repository implements a standalone **Policy Decision Point (PDP)** consumed by **Envoy** via the `ext_authz` gRPC API.
 
-The PDD:
+The PDP:
 
 - Receives authorization requests from Envoy
 - Extracts:
@@ -52,7 +52,7 @@ The PDP **does not**:
 
 ---
 
-# 2.  Policy Model
+# 2.  Input Model
 
 
 ## 2.1 Subject
@@ -65,7 +65,7 @@ Envoy configuration:
 
 PDP reads JWT claims from:
 
-`req.Attributes.MetadataContext.FilterMetadata["envoy.filters.http.jst_authn"]`
+`req.Attributes.MetadataContext.FilterMetadata["envoy.filters.http.jwt_authn"]`
 
 Initially we model subject with one attribute 'jwt':
 
@@ -108,7 +108,7 @@ actor {
 ```
 
 Actor is:
-- `null` if no XFCC is provided or it fails to decode
+- `null` if no client certificate is provided or it fails to decode
 
 Absence is never represented as `"anonymous"` or `""`.
 
@@ -146,7 +146,7 @@ operation {
 # 3. Authorization Model
 
 
-The PDD evaluates an ordered list of named CEL boolean expressions defined in a yaml policy:
+The PDP evaluates an ordered list of named CEL boolean expressions defined in a yaml policy:
 
 Rules are evaluated in order until the first match (evaluation returns true). The first matched rule returns the rule key: allow or deny. If no rule matches, policy returns deny.
 
@@ -160,12 +160,12 @@ rules:
     deny: actor == null
 
   - id: allow-health
-    allow: resource.startsWith("/healthz")
+    allow: "admin" in subject.jwt.scopes()
 
   - id: allow-service-a-readonly
     allow: actor != null &&
-           actor.id == "spiffe://prod/ns/foo/sa/svc-a" &&
-           action in ["http:GET", "http:HEAD"]
+           actor.cn == "svc-a" && actor.auid == "ap12345"
+           operation.id in ["Order_Get", "Order_List"]
 
   - id: deny-all
     deny: true
@@ -257,7 +257,7 @@ These must not be violated:
 2. JWT must never be re-validated in PDP
 3. Absence of identity must not be encoded as a magic string.
 4. Policy compilation must occur at startup only.
-5. PDD must be stateless.
+5. PDP must be stateless.
 6. No external I/O (DB, HTTP) in request path.
 
 ---
