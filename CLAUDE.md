@@ -257,12 +257,50 @@ Declared variables and their types:
 
 | Variable | Type | Nullable | Source |
 |----------|------|----------|--------|
-| `subject` | struct | no | always present |
-| `subject.jwt` | `map(string, dyn)` | yes | null when `jwt_authn` metadata absent |
-| `actor` | struct | yes | null when no peer cert or parse failure |
+| `subject` | proto message | no | always present |
+| `subject.jwt` | `google.protobuf.Struct` | yes | null when `jwt_authn` metadata absent |
+| `actor` | proto message | yes | null when no peer cert or parse failure |
 | `operation` | struct | no | fields are `""` when not configured in route metadata |
 | `resource` | `string` | no | `req.Attributes.Request.Http.Path` |
 | `action` | `string` | no | `req.Attributes.Request.Http.Method` (e.g. `"GET"`) |
+
+## CEL Type Declaration Strategy
+
+**`actor` — proto message**
+
+`actor` is declared as a registered proto message in the CEL environment. This gives:
+
+- Null handled natively: `actor == null` and `actor != null` work as expected
+- Field names validated at compile time: `actor.cnn` (typo) fails at startup, not at request time
+- Type mismatches caught at startup: `actor.cn > 5` fails before serving any traffic
+- Rule syntax is **identical** to what would be written with `dyn` — no impact on policy authors
+
+The `has()` macro is available for proto3 fields and checks for a non-zero value:
+
+```cel
+has(actor.uri)   # true iff actor.uri != "" — shorthand for "cert had a URI SAN"
+```
+
+**`subject` — proto message wrapper**
+
+`subject` is a thin proto wrapper with a single `jwt` field. Being proto gives compile-time
+validation that `subject.jwt` is the correct field name (typos like `subject.jwt_payload`
+are caught at startup). Since `subject` is never null, this benefit is modest but consistent
+with the actor approach.
+
+**`subject.jwt` — `google.protobuf.Struct`**
+
+JWT claims are dynamic — issuers vary and token schemas differ. A fixed proto message for
+the JWT payload is not viable. `google.protobuf.Struct` is used, which CEL exposes with
+identical map access syntax:
+
+```cel
+subject.jwt["sub"] == "alice"
+"admin" in subject.jwt["roles"]
+```
+
+Claim names and value types cannot be validated at compile time. A typo like
+`subject.jwt["subb"]` returns null at runtime (rule evaluates to false, not an error).
 
 ---
 
