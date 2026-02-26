@@ -37,6 +37,7 @@ Client – Envoy (mTLS + JWT validation)
 - Extract JWT payload into dynamic metadata
 - Forward client certificate (if configured)
 - Call PDP via ext_authz
+- Set `failure_mode_deny: true` on the ext_authz filter — requests must be denied when PDP is unreachable
 
 ### PDP responsibilities
 
@@ -65,13 +66,25 @@ Envoy configuration:
 
 PDP reads JWT claims from:
 
-`req.Attributes.MetadataContext.FilterMetadata["envoy.filters.http.jwt_authn"]`
+`req.Attributes.MetadataContext.FilterMetadata["envoy.filters.http.jwt_authn"][<key>]`
 
-Initially we model subject with one attribute 'jwt':
+where `<key>` is configured via the `-jwt-metadata-key` startup flag. It must match
+the `payload_in_metadata` value in the Envoy `jwt_authn` provider configuration.
 
-`subject.jwt`
+Subject is modelled as:
 
-The JWT structure is preserved as structured data.
+```
+subject {
+  jwt: map(string, dyn) | null
+}
+```
+
+`subject` is always non-null. `subject.jwt` is null when Envoy did not inject JWT
+metadata (request arrived without a valid JWT, or `jwt_authn` is not configured
+for the route).
+
+When present, `subject.jwt` is converted from the protobuf Struct produced by
+Envoy into a native `map(string, dyn)` before building the CEL activation.
 
 
 
@@ -87,30 +100,25 @@ ext_authz config must include:
 
 PDP extracts:
 
-req.Attributes.Source.Certificate
-
-Identity extraction source based on parameter (`-identity-source`):
-1. URI SAN
-2. DNS SAN
-3. subject DN
+`req.Attributes.Source.Certificate`
 
 Actor is modelled as:
 
-```go
+```
 actor {
-  cn: string # certificate subject cn
-  dn: string # certificate subject dn
-  auid: string # the first certificate subject ou if it matches 'a[p0-9][0-9]{5}'
-  icn: string # certificate issuer cn
-  idn: string # certificate issuer dn
-  uri: string # URI SAN - if present, otherwise nil
+  cn:   string  // certificate Subject CN; "" if absent
+  dn:   string  // certificate Subject DN
+  auid: string  // first Subject OU matching 'a[p0-9][0-9]{5}'; "" if none
+  icn:  string  // issuer CN
+  idn:  string  // issuer DN
+  uri:  string  // URI SAN (e.g. SPIFFE ID); "" if absent
 }
 ```
 
-Actor is:
-- `null` if no client certificate is provided or it fails to decode
+`actor` is null when no peer certificate is present or certificate parsing fails.
+String fields are `""` (never null) when the attribute is absent from the certificate.
 
-Absence is never represented as `"anonymous"` or `""`.
+Absence is never represented as `"anonymous"`.
 
 ---
 
@@ -125,20 +133,23 @@ routes:
   metadata:
     filter_metadata:
       pdp:
-        operation: "cart.item.list"
+        operation_id: "cart.item.list"
         scope: "billing"
         version: "v1"
 ```
 
 operation is modelled as:
 
-```go
+```
 operation {
-  id: string
-  scope: string
+  id:      string  // maps from the `operation_id` key in filter_metadata.pdp
+  scope:   string
   version: string
 }
 ```
+
+The `operation_id` key in route `filter_metadata.pdp` maps to `operation.id` in the
+CEL environment. All fields are `""` when the route carries no `pdp` metadata.
 
 
 ---
@@ -146,25 +157,31 @@ operation {
 # 3. Authorization Model
 
 
-The PDP evaluates an ordered list of named CEL boolean expressions defined in a yaml policy:
+The PDP evaluates an ordered list of named CEL boolean expressions defined in a yaml policy.
 
-Rules are evaluated in order until the first match (evaluation returns true). The first matched rule returns the rule key: allow or deny. If no rule matches, policy returns deny.
+Rules are evaluated in order until the first match (evaluation returns true). The first
+matched rule returns its decision (allow or deny). **Default is always deny** — there is
+no configurable default key; if no rule matches, the request is denied.
+
+Policy schema:
+
+- `version` — integer, schema version for forward compatibility (currently `1`)
+- `rules` — ordered list of rules; each rule has exactly one of `allow` or `deny` (not both); a rule with both keys is a schema error and the service must fail at startup
 
 Policy structure:
 
 ```yaml
 version: 1
-default: deny
 rules:
-  - id: deny-no-actor
-    deny: actor == null
+  - id: deny-no-identity
+    deny: actor == null || subject.jwt == null
 
-  - id: allow-health
-    allow: "admin" in subject.jwt.scopes()
+  - id: allow-admin
+    allow: subject.jwt != null && "order:admin" in subject.jwt["scopes"]
 
-  - id: allow-service-a-readonly
-    allow: actor != null &&
-           actor.cn == "svc-a" && actor.auid == "ap12345"
+  - id: allow-order_get-readonly
+    allow: actor != null && actor.cn == "svc-a" &&
+           actor.auid == "ap12345" &&
            operation.id in ["Order_Get", "Order_List"]
 
   - id: deny-all
@@ -181,27 +198,71 @@ rules:
 At startup:
 - parse YAML
 - fast fail on invalid policy
-- for each rule: env.Compile(rule.when) → cel.Program
+- for each rule: env.Compile(rule.allow/rule.deny) → cel.Program
 - store compiled programs
 
 Per request:
-- build activation map (actor, subject, operation, …)
-- iterate programs until match
+- build activation map (actor, subject, operation, resource, action)
+- iterate rules in order until first match
 
 Default posture:
 - Fail closed
-- Deny if policy evaluation fails
+- Deny if no rule matches
 - Never allow on evaluation error
+
+### CEL Evaluation Semantics
+
+Each rule expression produces one of three outcomes:
+
+| Outcome | Meaning | Action |
+|---------|---------|--------|
+| `true` | rule matched | apply rule decision (allow/deny), stop |
+| `false` | rule did not match | continue to next rule |
+| error | runtime fault | **immediate deny, stop** |
+
+Errors include: null field access without a null guard, type mismatch,
+unknown function. An error in any rule causes the entire request to be denied
+immediately — evaluation does not continue to the next rule.
+
+**Null guard patterns:**
+
+**Pattern 1 — Inline guard** (self-contained, rule-order-independent):
+
+```cel
+actor != null && actor.cn == "svc-a"
+subject.jwt != null && subject.jwt["sub"] == "user@example.com"
+```
+
+**Pattern 2 — Early-exit establishment** (a preceding deny rule guarantees
+non-nullness for all subsequent rules):
+
+```yaml
+- id: deny-no-identity
+  deny: actor == null || subject.jwt == null   # fires first; null never reaches below
+
+- id: allow-svc-a                              # safe: null already denied above
+  allow: actor.cn == "svc-a" && ...
+```
+
+Pattern 2 produces more readable rules but makes **rule order load-bearing**. If the
+early-exit rule is removed or reordered, subsequent unguarded rules will error on null
+input → deny. Prefer Pattern 1 for rules that may be reused or reordered. CEL
+short-circuits `&&` and `||`, so guard must always precede field access.
 
 ---
 
 # 4. CEL Environment
 
-Declared variables:
+Declared variables and their types:
 
-- `subject`
-- `actor` (nullable)
-- `operation`
+| Variable | Type | Nullable | Source |
+|----------|------|----------|--------|
+| `subject` | struct | no | always present |
+| `subject.jwt` | `map(string, dyn)` | yes | null when `jwt_authn` metadata absent |
+| `actor` | struct | yes | null when no peer cert or parse failure |
+| `operation` | struct | no | fields are `""` when not configured in route metadata |
+| `resource` | `string` | no | `req.Attributes.Request.Http.Path` |
+| `action` | `string` | no | `req.Attributes.Request.Http.Method` (e.g. `"GET"`) |
 
 ---
 
@@ -212,20 +273,28 @@ System must fail closed.
 ## TLS layer
 
 If mTLS required:
-- Non-mTLS never reaches PDP.
+- Non-mTLS never reaches PDP.
 
 If mTLS optional:
 - Actor may be null.
-- Policy must explicitly allow null actor.
+- Without an explicit allow rule for null actor, unauthenticated requests are denied by default.
 
 ## PDP layer
 
-If:
-- Certificate parse error
-- CEL evaluation error
+Absent identity is not an error — it is represented as null and passed to CEL:
 
-If:
-- JWT metadata missing - it needs to be explicitly allowed
+- No peer certificate or parse failure → `actor = null`
+- JWT metadata absent → `subject.jwt = null`
+
+Policy is responsible for handling null explicitly. A rule that accesses a null
+value without a guard produces a CEL evaluation error, which results in an
+immediate deny.
+
+The following result in immediate deny:
+
+- CEL evaluation error (e.g. null field access without guard)
+- CEL result is not a boolean
+- Policy file invalid or fails to compile at startup (fast fail, service does not start)
 
 Never:
 - Allow on error.
@@ -244,9 +313,16 @@ pdp/cel/               – CEL evaluator
 ```
 
 Core flow inside `Check()` function implemented in main.go:
-1. Construct input variables
-2. Evaluate CEL
-3. Return OkHttpResponse or DeniedHttpResponse
+
+1. Extract `resource` from `req.Attributes.Request.Http.Path`
+2. Extract `action` from `req.Attributes.Request.Http.Method`
+3. Extract `subject.jwt` from `FilterMetadata["envoy.filters.http.jwt_authn"][<-jwt-metadata-key>]` → null if absent
+4. Extract `actor` from `req.Attributes.Source.Certificate` → null if absent or parse failure
+5. Extract `operation` fields from route `FilterMetadata["pdp"]` → empty strings if absent
+6. Build CEL activation map
+7. Evaluate rules in order; on first match apply decision and return
+8. If no rule matches → deny
+9. If any rule errors → deny immediately
 
 ---
 
@@ -262,7 +338,15 @@ These must not be violated:
 
 ---
 
-# 8. Non-Goals (Current MVP)
+# 8. Architecture Decision Records
+
+| ADR | Title | Status |
+|-----|-------|--------|
+| [ADR-001](docs/adr/001-operation-id-vs-path-verb.md) | Operation ID as primary authorization axis | Accepted |
+
+---
+
+# 9. Non-Goals (Current MVP)
 
 Not implemented:
 
@@ -275,7 +359,7 @@ Not implemented:
 
 ---
 
-# 9. Future Directions
+# 10. Future Directions
 
 Likely next architectural extensions:
 
@@ -285,7 +369,7 @@ Likely next architectural extensions:
 
 ---
 
-# 10. Design Principles
+# 11. Design Principles
 
 - Deterministic evaluation
 - No network I/O in request path
