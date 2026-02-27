@@ -22,7 +22,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type Actor struct {
+type Peer struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Cn            string                 `protobuf:"bytes,1,opt,name=cn,proto3" json:"cn,omitempty"`     // Subject CN; "" if absent
 	Dn            string                 `protobuf:"bytes,2,opt,name=dn,proto3" json:"dn,omitempty"`     // Subject DN (RFC 4514)
@@ -34,20 +34,20 @@ type Actor struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *Actor) Reset() {
-	*x = Actor{}
+func (x *Peer) Reset() {
+	*x = Peer{}
 	mi := &file_model_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *Actor) String() string {
+func (x *Peer) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Actor) ProtoMessage() {}
+func (*Peer) ProtoMessage() {}
 
-func (x *Actor) ProtoReflect() protoreflect.Message {
+func (x *Peer) ProtoReflect() protoreflect.Message {
 	mi := &file_model_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -59,47 +59,47 @@ func (x *Actor) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Actor.ProtoReflect.Descriptor instead.
-func (*Actor) Descriptor() ([]byte, []int) {
+// Deprecated: Use Peer.ProtoReflect.Descriptor instead.
+func (*Peer) Descriptor() ([]byte, []int) {
 	return file_model_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *Actor) GetCn() string {
+func (x *Peer) GetCn() string {
 	if x != nil {
 		return x.Cn
 	}
 	return ""
 }
 
-func (x *Actor) GetDn() string {
+func (x *Peer) GetDn() string {
 	if x != nil {
 		return x.Dn
 	}
 	return ""
 }
 
-func (x *Actor) GetAuid() string {
+func (x *Peer) GetAuid() string {
 	if x != nil {
 		return x.Auid
 	}
 	return ""
 }
 
-func (x *Actor) GetIcn() string {
+func (x *Peer) GetIcn() string {
 	if x != nil {
 		return x.Icn
 	}
 	return ""
 }
 
-func (x *Actor) GetIdn() string {
+func (x *Peer) GetIdn() string {
 	if x != nil {
 		return x.Idn
 	}
 	return ""
 }
 
-func (x *Actor) GetUri() string {
+func (x *Peer) GetUri() string {
 	if x != nil {
 		return x.Uri
 	}
@@ -214,8 +214,8 @@ var File_model_proto protoreflect.FileDescriptor
 
 const file_model_proto_rawDesc = "" +
 	"\n" +
-	"\vmodel.proto\x12\x03pdp\x1a\x1cgoogle/protobuf/struct.proto\"q\n" +
-	"\x05Actor\x12\x0e\n" +
+	"\vmodel.proto\x12\x03pdp\x1a\x1cgoogle/protobuf/struct.proto\"p\n" +
+	"\x04Peer\x12\x0e\n" +
 	"\x02cn\x18\x01 \x01(\tR\x02cn\x12\x0e\n" +
 	"\x02dn\x18\x02 \x01(\tR\x02dn\x12\x12\n" +
 	"\x04auid\x18\x03 \x01(\tR\x04auid\x12\x10\n" +
@@ -243,7 +243,7 @@ func file_model_proto_rawDescGZIP() []byte {
 
 var file_model_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_model_proto_goTypes = []any{
-	(*Actor)(nil),           // 0: pdp.Actor
+	(*Peer)(nil),            // 0: pdp.Peer
 	(*Subject)(nil),         // 1: pdp.Subject
 	(*Operation)(nil),       // 2: pdp.Operation
 	(*structpb.Struct)(nil), // 3: google.protobuf.Struct

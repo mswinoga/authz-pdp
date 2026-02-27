@@ -12,8 +12,8 @@ import (
 
 // EvalContext holds the per-request input variables passed to CEL.
 type EvalContext struct {
-	Actor     *pdppb.Actor     // nil when no peer cert or cert parse failure
-	Subject   *pdppb.Subject   // never nil; Subject.Jwt may be nil
+	Peer      *pdppb.Peer      // nil when no peer cert or cert parse failure
+	Subject   *pdppb.Subject   // never nil; Subject.Jwt may be nil — not a CEL variable
 	Operation *pdppb.Operation // never nil; fields may be ""
 	Resource  string
 	Action    string
@@ -105,16 +105,20 @@ func (e *Evaluator) Evaluate(ctx EvalContext) (allow bool, matchedRule string) {
 }
 
 // buildActivation constructs the CEL variable map for one request.
-// When actor is nil, types.NullValue is passed so that `actor == null`
-// evaluates to true in CEL expressions.
+// peer: types.NullValue when no client certificate is present.
+// jwt:  types.NullValue when jwt_authn metadata is absent.
 func buildActivation(ctx EvalContext) map[string]any {
-	var actorVal any = types.NullValue
-	if ctx.Actor != nil {
-		actorVal = ctx.Actor
+	var peerVal any = types.NullValue
+	if ctx.Peer != nil {
+		peerVal = ctx.Peer
+	}
+	var jwtVal any = types.NullValue
+	if ctx.Subject != nil && ctx.Subject.Jwt != nil {
+		jwtVal = ctx.Subject.Jwt
 	}
 	return map[string]any{
-		"actor":     actorVal,
-		"subject":   ctx.Subject,
+		"peer":      peerVal,
+		"jwt":       jwtVal,
 		"operation": ctx.Operation,
 		"resource":  ctx.Resource,
 		"action":    ctx.Action,

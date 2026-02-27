@@ -6,7 +6,7 @@ option go_package = "github.com/marcin/authz-pdp/pdp/gen/pdp";
 
 import "google/protobuf/struct.proto";
 
-message Actor {
+message Peer {
   string cn   = 1; // Subject CN; "" if absent
   string dn   = 2; // Subject DN (RFC 4514)
   string auid = 3; // first Subject OU matching a[p0-9][0-9]{5}; "" if none

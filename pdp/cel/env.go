@@ -12,16 +12,17 @@ func buildEnv() (*cel.Env, error) {
 		// Register proto message descriptors so field names are validated
 		// at policy compile time rather than at request evaluation time.
 		cel.Types(
-			new(pdppb.Actor),
-			new(pdppb.Subject),
+			new(pdppb.Peer),
 			new(pdppb.Operation),
 		),
 
-		// actor is nullable: pass types.NullValue when no peer cert is present.
-		cel.Variable("actor", cel.ObjectType("pdp.Actor")),
+		// peer is nullable: pass types.NullValue when no peer cert is present.
+		cel.Variable("peer", cel.ObjectType("pdp.Peer")),
 
-		// subject is never null; subject.jwt (google.protobuf.Struct) may be null.
-		cel.Variable("subject", cel.ObjectType("pdp.Subject")),
+		// jwt is nullable: pass types.NullValue when jwt_authn metadata is absent.
+		// Declared as dyn so that jwt == null works; google.protobuf.Struct is a
+		// CEL Well-Known Type that maps to map(string,dyn), which has no == null overload.
+		cel.Variable("jwt", cel.DynType),
 
 		// operation is never null; all string fields are "" when not configured.
 		cel.Variable("operation", cel.ObjectType("pdp.Operation")),

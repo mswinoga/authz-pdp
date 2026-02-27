@@ -38,11 +38,11 @@ func makeJWT(claims map[string]any) *structpb.Struct {
 }
 
 var (
-	someActor = &pdppb.Actor{Cn: "svc-a", Auid: "ap12345", Uri: "spiffe://prod/svc-a"}
-	someJWT   = makeJWT(map[string]any{"sub": "alice", "roles": []any{"viewer"}})
-	adminJWT  = makeJWT(map[string]any{"sub": "admin", "roles": []any{"order:admin"}})
-	someOp    = &pdppb.Operation{Id: "Order_Get", Scope: "orders", Version: "v1"}
-	emptyOp   = &pdppb.Operation{}
+	somePeer = &pdppb.Peer{Cn: "svc-a", Auid: "ap12345", Uri: "spiffe://prod/svc-a"}
+	someJWT  = makeJWT(map[string]any{"sub": "alice", "roles": []any{"viewer"}})
+	adminJWT = makeJWT(map[string]any{"sub": "admin", "roles": []any{"order:admin"}})
+	someOp   = &pdppb.Operation{Id: "Order_Get", Scope: "orders", Version: "v1"}
+	emptyOp  = &pdppb.Operation{}
 )
 
 func subjectWith(jwt *structpb.Struct) *pdppb.Subject { return &pdppb.Subject{Jwt: jwt} }
@@ -53,13 +53,13 @@ func TestEvaluate(t *testing.T) {
 version: 1
 rules:
   - id: deny-no-identity
-    deny: actor == null || !has(subject.jwt)
+    deny: peer == null || jwt == null
   - id: allow-admin
-    allow: has(subject.jwt) && "order:admin" in subject.jwt["roles"]
+    allow: jwt != null && "order:admin" in jwt["roles"]
   - id: allow-service-readonly
-    allow: actor != null &&
-           actor.cn == "svc-a" &&
-           actor.auid == "ap12345" &&
+    allow: peer != null &&
+           peer.cn == "svc-a" &&
+           peer.auid == "ap12345" &&
            operation.id in ["Order_Get", "Order_List"]
   - id: deny-all
     deny: "true"
@@ -73,33 +73,33 @@ rules:
 		wantAllow bool
 	}{
 		{
-			name:      "null actor → deny via deny-no-identity",
-			ctx:       EvalContext{Actor: nil, Subject: subjectWith(someJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
+			name:      "null peer → deny via deny-no-identity",
+			ctx:       EvalContext{Peer: nil, Subject: subjectWith(someJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
 			wantAllow: false,
 		},
 		{
 			name:      "null jwt → deny via deny-no-identity",
-			ctx:       EvalContext{Actor: someActor, Subject: subjectNil(), Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       EvalContext{Peer: somePeer, Subject: subjectNil(), Operation: someOp, Resource: "/orders", Action: "GET"},
 			wantAllow: false,
 		},
 		{
 			name:      "admin JWT → allow via allow-admin",
-			ctx:       EvalContext{Actor: someActor, Subject: subjectWith(adminJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       EvalContext{Peer: somePeer, Subject: subjectWith(adminJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
 			wantAllow: true,
 		},
 		{
 			name:      "matching service + operation → allow",
-			ctx:       EvalContext{Actor: someActor, Subject: subjectWith(someJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       EvalContext{Peer: somePeer, Subject: subjectWith(someJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
 			wantAllow: true,
 		},
 		{
 			name:      "wrong operation id → deny via deny-all",
-			ctx:       EvalContext{Actor: someActor, Subject: subjectWith(someJWT), Operation: &pdppb.Operation{Id: "Order_Delete"}, Resource: "/orders", Action: "DELETE"},
+			ctx:       EvalContext{Peer: somePeer, Subject: subjectWith(someJWT), Operation: &pdppb.Operation{Id: "Order_Delete"}, Resource: "/orders", Action: "DELETE"},
 			wantAllow: false,
 		},
 		{
 			name:      "wrong CN → deny via deny-all",
-			ctx:       EvalContext{Actor: &pdppb.Actor{Cn: "svc-b", Auid: "ap12345"}, Subject: subjectWith(someJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       EvalContext{Peer: &pdppb.Peer{Cn: "svc-b", Auid: "ap12345"}, Subject: subjectWith(someJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
 			wantAllow: false,
 		},
 	}
@@ -115,17 +115,17 @@ rules:
 }
 
 func TestEvaluateNullGuardError(t *testing.T) {
-	// A rule that accesses actor.cn without a null guard — when actor is nil,
+	// A rule that accesses peer.cn without a null guard — when peer is nil,
 	// this produces a CEL runtime error → immediate deny.
 	const p = `
 version: 1
 rules:
   - id: unguarded-access
-    allow: actor.cn == "svc-a"
+    allow: peer.cn == "svc-a"
 `
 	ev := newEvaluator(t, p)
 	ctx := EvalContext{
-		Actor:     nil, // null actor
+		Peer:      nil, // null peer
 		Subject:   subjectWith(someJWT),
 		Operation: emptyOp,
 		Resource:  "/",
@@ -146,7 +146,7 @@ rules:
 `
 	ev := newEvaluator(t, p)
 	ctx := EvalContext{
-		Actor:     someActor,
+		Peer:      somePeer,
 		Subject:   subjectWith(someJWT),
 		Operation: emptyOp,
 		Resource:  "/",
@@ -164,13 +164,13 @@ func TestEvaluateErrorStopsEvaluation(t *testing.T) {
 version: 1
 rules:
   - id: error-rule
-    deny: actor.cn == "bad"
+    deny: peer.cn == "bad"
   - id: allow-all
     allow: "true"
 `
 	ev := newEvaluator(t, p)
 	ctx := EvalContext{
-		Actor:     nil, // causes error in rule 1
+		Peer:      nil, // causes error in rule 1
 		Subject:   subjectWith(someJWT),
 		Operation: emptyOp,
 		Resource:  "/",
@@ -187,20 +187,20 @@ func TestEvaluateHasMacro(t *testing.T) {
 version: 1
 rules:
   - id: allow-if-has-uri
-    allow: actor != null && has(actor.uri)
+    allow: peer != null && has(peer.uri)
   - id: deny-all
     deny: "true"
 `
 	ev := newEvaluator(t, p)
 
-	withURI := &pdppb.Actor{Cn: "svc", Uri: "spiffe://prod/svc"}
-	withoutURI := &pdppb.Actor{Cn: "svc", Uri: ""}
+	withURI := &pdppb.Peer{Cn: "svc", Uri: "spiffe://prod/svc"}
+	withoutURI := &pdppb.Peer{Cn: "svc", Uri: ""}
 
-	if got, _ := ev.Evaluate(EvalContext{Actor: withURI, Subject: subjectWith(someJWT), Operation: emptyOp, Resource: "/", Action: "GET"}); !got {
-		t.Error("expected allow when actor has URI")
+	if got, _ := ev.Evaluate(EvalContext{Peer: withURI, Subject: subjectWith(someJWT), Operation: emptyOp, Resource: "/", Action: "GET"}); !got {
+		t.Error("expected allow when peer has URI")
 	}
-	if got, _ := ev.Evaluate(EvalContext{Actor: withoutURI, Subject: subjectWith(someJWT), Operation: emptyOp, Resource: "/", Action: "GET"}); got {
-		t.Error("expected deny when actor has no URI")
+	if got, _ := ev.Evaluate(EvalContext{Peer: withoutURI, Subject: subjectWith(someJWT), Operation: emptyOp, Resource: "/", Action: "GET"}); got {
+		t.Error("expected deny when peer has no URI")
 	}
 }
 
@@ -210,7 +210,7 @@ func TestNewEvaluatorInvalidExpression(t *testing.T) {
 version: 1
 rules:
   - id: bad-expr
-    allow: actor.nonexistent_field == "x"
+    allow: peer.nonexistent_field == "x"
 `), 0600)
 	p, err := policy.LoadFile(path, slog.Default())
 	if err != nil {

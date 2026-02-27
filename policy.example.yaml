@@ -1,15 +1,15 @@
 version: 1
 rules:
   - id: deny-no-identity
-    deny: actor == null || !has(subject.jwt)
+    deny: peer == null || jwt == null
 
   - id: allow-admin
-    allow: has(subject.jwt) && "order:admin" in subject.jwt["scopes"]
+    allow: jwt != null && "order:admin" in jwt["scopes"]
 
   - id: allow-service-readonly
-    allow: actor != null &&
-           actor.cn == "svc-a" &&
-           actor.auid == "ap12345" &&
+    allow: peer != null &&
+           peer.cn == "svc-a" &&
+           peer.auid == "ap12345" &&
            operation.id in ["Order_Get", "Order_List"]
 
   - id: deny-all

@@ -1,4 +1,4 @@
-package actor
+package peer
 
 import (
 	"crypto/x509"
@@ -18,28 +18,28 @@ func SetLogger(l *slog.Logger) { logger = l }
 
 var auidPattern = regexp.MustCompile(`^a[p0-9][0-9]{5}$`)
 
-// Parse extracts an Actor from the peer certificate field of an ext_authz
+// Parse extracts a Peer from the peer certificate field of an ext_authz
 // CheckRequest. The input is the URL-encoded DER or PEM certificate string
 // set by Envoy in req.Attributes.Source.Certificate.
 // Returns nil if the input is empty or cannot be parsed.
-func Parse(certStr string) *pdppb.Actor {
+func Parse(certStr string) *pdppb.Peer {
 	if certStr == "" {
 		return nil
 	}
 
 	decoded, err := url.PathUnescape(certStr)
 	if err != nil {
-		logger.Warn("actor parse failed", "reason", "url unescape: "+err.Error())
+		logger.Warn("peer parse failed", "reason", "url unescape: "+err.Error())
 		return nil
 	}
 
 	cert := parseCert([]byte(decoded))
 	if cert == nil {
-		logger.Warn("actor parse failed", "reason", "cert parse failed")
+		logger.Warn("peer parse failed", "reason", "cert parse failed")
 		return nil
 	}
 
-	return &pdppb.Actor{
+	return &pdppb.Peer{
 		Cn:   cert.Subject.CommonName,
 		Dn:   dnString(cert.Subject.ToRDNSequence()),
 		Auid: extractAUID(cert.Subject.OrganizationalUnit),

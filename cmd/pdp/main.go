@@ -19,7 +19,7 @@ import (
 
 	"github.com/marcin/authz-pdp/internal/logsetup"
 	"github.com/marcin/authz-pdp/pdp/cel"
-	actorpkg "github.com/marcin/authz-pdp/pdp/model/actor"
+	peerpkg "github.com/marcin/authz-pdp/pdp/model/peer"
 	operationpkg "github.com/marcin/authz-pdp/pdp/model/operation"
 	subjectpkg "github.com/marcin/authz-pdp/pdp/model/subject"
 	"github.com/marcin/authz-pdp/pdp/policy"
@@ -75,7 +75,7 @@ func main() {
 		"log-level", *logLevelFlag,
 	)
 
-	actorpkg.SetLogger(loggers["input"])
+	peerpkg.SetLogger(loggers["input"])
 	subjectpkg.SetLogger(loggers["input"])
 	operationpkg.SetLogger(loggers["input"])
 
@@ -127,24 +127,24 @@ func (s *server) Check(
 	resource := req.GetAttributes().GetRequest().GetHttp().GetPath()
 	action := req.GetAttributes().GetRequest().GetHttp().GetMethod()
 
-	actor := actorpkg.Parse(req.GetAttributes().GetSource().GetCertificate())
+	peer := peerpkg.Parse(req.GetAttributes().GetSource().GetCertificate())
 	subject := subjectpkg.Extract(req, s.jwtMetadataKey)
 	operation := operationpkg.Extract(req)
 
 	allow, ruleID := s.evaluator.Evaluate(cel.EvalContext{
-		Actor:     actor,
+		Peer:      peer,
 		Subject:   subject,
 		Operation: operation,
 		Resource:  resource,
 		Action:    action,
 	})
 
-	actorCN := ""
-	if actor != nil {
-		actorCN = actor.Cn
+	peerCN := ""
+	if peer != nil {
+		peerCN = peer.Cn
 	}
 	s.logger.Info("decision",
-		"actor_cn", actorCN,
+		"peer_cn", peerCN,
 		"resource", resource,
 		"action", action,
 		"rule", ruleID,

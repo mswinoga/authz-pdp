@@ -1,4 +1,4 @@
-package actor
+package peer
 
 import (
 	"crypto/x509"
@@ -98,7 +98,7 @@ func TestParse(t *testing.T) {
 				return
 			}
 			if got == nil {
-				t.Fatal("expected non-nil actor, got nil")
+				t.Fatal("expected non-nil peer, got nil")
 			}
 			if got.Cn != tc.wantCN {
 				t.Errorf("CN: want %q, got %q", tc.wantCN, got.Cn)
@@ -137,14 +137,14 @@ func TestExtractAUID(t *testing.T) {
 }
 
 func TestParseDNFields(t *testing.T) {
-	actor := Parse(urlEncodePEM(t, "testdata/full.pem"))
-	if actor == nil {
-		t.Fatal("expected non-nil actor")
+	peer := Parse(urlEncodePEM(t, "testdata/full.pem"))
+	if peer == nil {
+		t.Fatal("expected non-nil peer")
 	}
-	if actor.Dn == "" {
+	if peer.Dn == "" {
 		t.Error("expected non-empty DN")
 	}
-	if actor.Idn == "" {
+	if peer.Idn == "" {
 		t.Error("expected non-empty issuer DN (self-signed cert has issuer == subject)")
 	}
 }

@@ -22,9 +22,9 @@ authz-pdp/
 │   │   └── pdp/
 │   │       └── model.pb.go         generated — do not edit
 │   ├── model/
-│   │   ├── actor/
-│   │   │   ├── actor.go            certificate → *Actor (nil on absent/error)
-│   │   │   └── actor_test.go
+│   │   ├── peer/
+│   │   │   ├── peer.go             certificate → *Peer (nil on absent/error)
+│   │   │   └── peer_test.go
 │   │   ├── subject/
 │   │   │   ├── subject.go          filter metadata → *Subject (jwt nil if absent)
 │   │   │   └── subject_test.go
@@ -48,7 +48,7 @@ authz-pdp/
 
 ## Dependencies
 
-go: version 1.23
+go: version 1.24
 
 ```
 github.com/google/cel-go                        v0.20+   CEL evaluation
@@ -81,7 +81,7 @@ option go_package = "github.com/org/authz-pdp/pdp/gen/pdp";
 
 import "google/protobuf/struct.proto";
 
-message Actor {
+message Peer {
   string cn   = 1;   // Subject CN;  "" if absent
   string dn   = 2;   // Subject DN (RFC 4514)
   string auid = 3;   // first Subject OU matching a[p0-9][0-9]{5}; "" if none
@@ -103,19 +103,21 @@ message Operation {
 
 Run `make generate` after any proto change. Generated output goes to `pdp/gen/pdp/`.
 
+Note: the `Subject` message is an internal Go model only. It is not declared as a CEL variable (see Phase 5).
+
 ---
 
 ## Phase 3 — Model Packages
 
-### 3.1 `pdp/model/actor`
+### 3.1 `pdp/model/peer`
 
 **Input:** `req.Attributes.Source.Certificate` — URL-encoded (percent-encoded) DER
 certificate string set by Envoy from the TLS peer certificate.
 
-**Output:** `*pdppb.Actor` or `nil`.
+**Output:** `*pdppb.Peer` or `nil`.
 
 ```
-func Parse(certStr string) *pdppb.Actor
+func Parse(certStr string) *pdppb.Peer
 ```
 
 Steps:
@@ -123,7 +125,7 @@ Steps:
 2. URL-decode: `url.PathUnescape(certStr)` → raw bytes string.
 3. Parse DER: `x509.ParseCertificate([]byte(decoded))` → `*x509.Certificate`.
    Return `nil` on any error.
-4. Build and return `*Actor`:
+4. Build and return `*Peer`:
    - `cn`  — `cert.Subject.CommonName`
    - `dn`  — RFC 4514 string built from `cert.Subject` via `pkix.RDNSequence.String()`
    - `auid`— first element of `cert.Subject.OrganizationalUnit` matching `^a[p0-9][0-9]{5}$`; `""` if none
@@ -151,6 +153,8 @@ Compile `auidPattern = regexp.MustCompile(...)` once at package init.
 ```
 func Extract(req *envoy_auth.CheckRequest, jwtMetadataKey string) *pdppb.Subject
 ```
+
+`Subject` is an internal Go model. It is **not** declared as a CEL variable. The `jwt` top-level variable is populated directly from `Subject.Jwt` in the CEL activation (see Phase 5).
 
 Steps:
 1. Navigate: `req.Attributes.MetadataContext.FilterMetadata["envoy.filters.http.jwt_authn"]`
@@ -247,8 +251,8 @@ Variable declarations:
 
 | Name | CEL type | Nullable |
 |------|----------|----------|
-| `actor` | `cel.ObjectType("pdp.Actor")` | yes — pass `types.NullValue` when nil |
-| `subject` | `cel.ObjectType("pdp.Subject")` | no |
+| `peer` | `cel.ObjectType("pdp.Peer")` | yes — pass `types.NullValue` when nil |
+| `jwt` | `cel.DynType` | yes — pass `types.NullValue` when absent |
 | `operation` | `cel.ObjectType("pdp.Operation")` | no |
 | `resource` | `cel.StringType` | no |
 | `action` | `cel.StringType` | no |
@@ -256,16 +260,16 @@ Variable declarations:
 Proto type registration:
 ```go
 cel.Types(
-    new(pdppb.Actor),
-    new(pdppb.Subject),
+    new(pdppb.Peer),
     new(pdppb.Operation),
 )
 ```
 
-**Null handling for `actor`:** the CEL env declares `actor` as the proto type.
-In the activation, pass `types.NullValue` when the Go actor pointer is nil,
-and the proto value otherwise. CEL's comparison `actor == null` evaluates
-correctly against `types.NullValue`.
+`jwt` is declared as `cel.DynType` (not `cel.ObjectType("google.protobuf.Struct")`) because CEL's WKT adapter converts Struct to `map(string, dyn)`, which has no `== null` overload. `dyn` supports both `jwt == null` and `jwt["sub"]` access.
+
+**Null handling for `peer` and `jwt`:** both CEL variables use `types.NullValue` in the
+activation map when the corresponding Go value is nil. CEL comparisons such as
+`peer == null` and `jwt == null` evaluate correctly against `types.NullValue`.
 
 ### 5.2 Evaluator (`evaluator.go`)
 
@@ -295,7 +299,7 @@ Any error here is fatal: service must not start with an invalid policy.
 
 ```go
 type EvalContext struct {
-    Actor     *pdppb.Actor    // nil if no cert
+    Peer      *pdppb.Peer     // nil if no cert
     Subject   *pdppb.Subject  // never nil; Subject.Jwt may be nil
     Operation *pdppb.Operation
     Resource  string
@@ -305,13 +309,17 @@ type EvalContext struct {
 
 Build activation:
 ```go
-actorVal := types.NullValue
-if ctx.Actor != nil {
-    actorVal = ctx.Actor
+peerVal := types.NullValue
+if ctx.Peer != nil {
+    peerVal = ctx.Peer
+}
+jwtVal := types.NullValue
+if ctx.Subject != nil && ctx.Subject.Jwt != nil {
+    jwtVal = ctx.Subject.Jwt
 }
 activation := map[string]any{
-    "actor":     actorVal,
-    "subject":   ctx.Subject,
+    "peer":      peerVal,
+    "jwt":       jwtVal,
     "operation": ctx.Operation,
     "resource":  ctx.Resource,
     "action":    ctx.Action,
@@ -336,17 +344,17 @@ return false                  // no match → deny
 **Tests (`evaluator_test.go`):** table-driven, building full `Evaluator` from inline
 policy YAML. Cover:
 
-| Scenario                                                             | Expected               |
-| -------------------------------------------------------------------- | ---------------------- |
-| null actor, rule accesses `actor.cn` without guard                   | deny (CEL error)       |
-| null actor, rule is `actor == null`                                  | match → apply decision |
-| null `subject.jwt`, rule accesses `subject.jwt["sub"]` without guard | deny (CEL error)       |
-| no rule matches                                                      | deny                   |
-| first matching rule is allow                                         | allow                  |
-| first matching rule is deny                                          | deny                   |
-| rule error stops evaluation, later allow rule not reached            | deny                   |
-| `has(actor.uri)` on populated uri                                    | true                   |
-| `has(actor.uri)` on empty uri                                        | false                  |
+| Scenario                                                        | Expected               |
+| --------------------------------------------------------------- | ---------------------- |
+| null peer, rule accesses `peer.cn` without guard                | deny (CEL error)       |
+| null peer, rule is `peer == null`                               | match → apply decision |
+| null `jwt`, rule accesses `jwt["sub"]` without guard            | deny (CEL error)       |
+| no rule matches                                                 | deny                   |
+| first matching rule is allow                                    | allow                  |
+| first matching rule is deny                                     | deny                   |
+| rule error stops evaluation, later allow rule not reached       | deny                   |
+| `has(peer.uri)` on populated uri                                | true                   |
+| `has(peer.uri)` on empty uri                                    | false                  |
 
 ---
 
@@ -380,11 +388,11 @@ func (s *server) Check(
     resource := req.GetAttributes().GetRequest().GetHttp().GetPath()
     action   := req.GetAttributes().GetRequest().GetHttp().GetMethod()
     subject  := subject.Extract(req, s.jwtMetadataKey)
-    actor    := actor.Parse(req.GetAttributes().GetSource().GetCertificate())
+    peer     := peer.Parse(req.GetAttributes().GetSource().GetCertificate())
     operation := operation.Extract(req)
 
     allow := s.evaluator.Evaluate(cel.EvalContext{
-        Actor:     actor,
+        Peer:      peer,
         Subject:   subject,
         Operation: operation,
         Resource:  resource,
@@ -418,14 +426,14 @@ Does not spin up a gRPC server — calls `Check()` logic directly.
 
 Cover at minimum:
 - Full allow path: valid cert + valid JWT + matching operation → 200
-- Deny on null actor
+- Deny on null peer
 - Deny on missing JWT
 - Deny on no rule match
 - Deny on CEL error
 
 ### Test fixtures
 
-Place PEM certificate fixtures in `pdp/model/actor/testdata/`.
+Place PEM certificate fixtures in `pdp/model/peer/testdata/`.
 Place policy YAML fixtures in `pdp/policy/testdata/`.
 
 ---
@@ -444,7 +452,7 @@ Phase 1 (bootstrap)
                             └── Phase 7 (integration tests)
 ```
 
-Phases 3a/3b/3c (actor/subject/operation) and Phase 4 (policy) can be
+Phases 3a/3b/3c (peer/subject/operation) and Phase 4 (policy) can be
 developed in parallel after Phase 2 completes.
 
 ---

@@ -9,7 +9,7 @@ The PDP:
 - Receives authorization requests from Envoy
 - Extracts:
   - **subject** from a verified unified JWT (provided by Envoy `jwt_authn`)
-  - **actor** from downstream mTLS client certificate
+  - **peer** from downstream mTLS client certificate
 - Evaluates a **CEL** policy expression
 - Returns allow/deny decision to Envoy
 
@@ -71,28 +71,24 @@ PDP reads JWT claims from:
 where `<key>` is configured via the `-jwt-metadata-key` startup flag. It must match
 the `payload_in_metadata` value in the Envoy `jwt_authn` provider configuration.
 
-Subject is modelled as:
+`subject` is an internal Go model only — it is NOT exposed as a CEL variable.
+
+`jwt` is a top-level CEL variable (see §4) carrying the decoded JWT claims:
 
 ```
-subject {
-  jwt: map(string, dyn) | null
-}
+jwt: map(string, dyn) | null   // top-level CEL variable; null when jwt_authn metadata absent
 ```
 
-`subject` is always non-null. `subject.jwt` is null when Envoy did not inject JWT
-metadata (request arrived without a valid JWT, or `jwt_authn` is not configured
-for the route).
-
-When present, `subject.jwt` is converted from the protobuf Struct produced by
-Envoy into a native `map(string, dyn)` before building the CEL activation.
+`jwt` is null when Envoy did not inject JWT metadata (request arrived without a
+valid JWT, or `jwt_authn` is not configured for the route).
 
 
 
 ---
 
-## 2.2 Actor
+## 2.2 Peer
 
-Actor identity is derived from downstream **mTLS client certificate**.
+Peer identity is derived from the downstream **mTLS peer certificate**.
 
 ext_authz config must include:
 
@@ -102,10 +98,10 @@ PDP extracts:
 
 `req.Attributes.Source.Certificate`
 
-Actor is modelled as:
+Peer is modelled as:
 
 ```
-actor {
+peer {
   cn:   string  // certificate Subject CN; "" if absent
   dn:   string  // certificate Subject DN
   auid: string  // first Subject OU matching 'a[p0-9][0-9]{5}'; "" if none
@@ -115,7 +111,7 @@ actor {
 }
 ```
 
-`actor` is null when no peer certificate is present or certificate parsing fails.
+`peer` is null when no peer certificate is present or certificate parsing fails.
 String fields are `""` (never null) when the attribute is absent from the certificate.
 
 Absence is never represented as `"anonymous"`.
@@ -174,14 +170,14 @@ Policy structure:
 version: 1
 rules:
   - id: deny-no-identity
-    deny: actor == null || !has(subject.jwt)
+    deny: peer == null || jwt == null
 
   - id: allow-admin
-    allow: has(subject.jwt) && "order:admin" in subject.jwt["scopes"]
+    allow: jwt != null && "order:admin" in jwt["scopes"]
 
   - id: allow-order_get-readonly
-    allow: actor != null && actor.cn == "svc-a" &&
-           actor.auid == "ap12345" &&
+    allow: peer != null && peer.cn == "svc-a" &&
+           peer.auid == "ap12345" &&
            operation.id in ["Order_Get", "Order_List"]
 
   - id: deny-all
@@ -202,7 +198,7 @@ At startup:
 - store compiled programs
 
 Per request:
-- build activation map (actor, subject, operation, resource, action)
+- build activation map (peer, jwt, operation, resource, action)
 - iterate rules in order until first match
 
 Default posture:
@@ -229,8 +225,8 @@ immediately — evaluation does not continue to the next rule.
 **Pattern 1 — Inline guard** (self-contained, rule-order-independent):
 
 ```cel
-actor != null && actor.cn == "svc-a"
-has(subject.jwt) && subject.jwt["sub"] == "user@example.com"
+peer != null && peer.cn == "svc-a"
+jwt  != null && jwt["sub"] == "user@example.com"
 ```
 
 **Pattern 2 — Early-exit establishment** (a preceding deny rule guarantees
@@ -238,10 +234,10 @@ non-nullness for all subsequent rules):
 
 ```yaml
 - id: deny-no-identity
-  deny: actor == null || !has(subject.jwt)     # fires first; null never reaches below
+  deny: peer == null || jwt == null     # fires first; null never reaches below
 
-- id: allow-svc-a                              # safe: null already denied above
-  allow: actor.cn == "svc-a" && ...
+- id: allow-svc-a                       # safe: null already denied above
+  allow: peer.cn == "svc-a" && ...
 ```
 
 Pattern 2 produces more readable rules but makes **rule order load-bearing**. If the
@@ -257,50 +253,45 @@ Declared variables and their types:
 
 | Variable | Type | Nullable | Source |
 |----------|------|----------|--------|
-| `subject` | proto message | no | always present |
-| `subject.jwt` | `google.protobuf.Struct` | yes | null when `jwt_authn` metadata absent |
-| `actor` | proto message | yes | null when no peer cert or parse failure |
-| `operation` | struct | no | fields are `""` when not configured in route metadata |
+| `peer` | proto message (`pdp.Peer`) | yes | null when no peer cert or parse failure |
+| `jwt` | `dyn` | yes | null when `jwt_authn` metadata absent |
+| `operation` | proto message (`pdp.Operation`) | no | fields are `""` when not configured |
 | `resource` | `string` | no | `req.Attributes.Request.Http.Path` |
-| `action` | `string` | no | `req.Attributes.Request.Http.Method` (e.g. `"GET"`) |
+| `action` | `string` | no | `req.Attributes.Request.Http.Method` |
 
 ## CEL Type Declaration Strategy
 
-**`actor` — proto message**
+**`peer` — proto message**
 
-`actor` is declared as a registered proto message in the CEL environment. This gives:
+`peer` is declared as a registered proto message in the CEL environment. This gives:
 
-- Null handled natively: `actor == null` and `actor != null` work as expected
-- Field names validated at compile time: `actor.cnn` (typo) fails at startup, not at request time
-- Type mismatches caught at startup: `actor.cn > 5` fails before serving any traffic
+- Null handled natively: `peer == null` and `peer != null` work as expected
+- Field names validated at compile time: `peer.cnn` (typo) fails at startup, not at request time
+- Type mismatches caught at startup: `peer.cn > 5` fails before serving any traffic
 - Rule syntax is **identical** to what would be written with `dyn` — no impact on policy authors
 
 The `has()` macro is available for proto3 fields and checks for a non-zero value:
 
 ```cel
-has(actor.uri)   # true iff actor.uri != "" — shorthand for "cert had a URI SAN"
+has(peer.uri)   # true iff peer.uri != "" — shorthand for "cert had a URI SAN"
 ```
 
-**`subject` — proto message wrapper**
+**`subject` — internal Go model only**
 
-`subject` is a thin proto wrapper with a single `jwt` field. Being proto gives compile-time
-validation that `subject.jwt` is the correct field name (typos like `subject.jwt_payload`
-are caught at startup). Since `subject` is never null, this benefit is modest but consistent
-with the actor approach.
+`subject` is an internal Go model and is NOT exposed as a CEL variable. The `jwt`
+top-level variable replaces it in the CEL environment.
 
-**`subject.jwt` — `google.protobuf.Struct`**
+**`jwt` — top-level nullable variable**
 
-JWT claims are dynamic — issuers vary and token schemas differ. A fixed proto message for
-the JWT payload is not viable. `google.protobuf.Struct` is used, which CEL exposes with
-identical map access syntax:
+`jwt` is declared as `cel.DynType`. Although `google.protobuf.Struct` is a CEL Well-Known Type, its WKT adapter converts it to `map(string, dyn)`, which has no `== null` overload. `dyn` allows `jwt == null` while still supporting map access `jwt["sub"]` at runtime. The tradeoff — no compile-time validation of jwt access patterns — is acceptable because JWT claim names are dynamic by nature.
 
 ```cel
-subject.jwt["sub"] == "alice"
-"admin" in subject.jwt["roles"]
+jwt["sub"] == "alice"
+"admin" in jwt["roles"]
 ```
 
 Claim names and value types cannot be validated at compile time. A typo like
-`subject.jwt["subb"]` returns null at runtime (rule evaluates to false, not an error).
+`jwt["subb"]` returns null at runtime (rule evaluates to false, not an error).
 
 ---
 
@@ -314,15 +305,15 @@ If mTLS required:
 - Non-mTLS never reaches PDP.
 
 If mTLS optional:
-- Actor may be null.
-- Without an explicit allow rule for null actor, unauthenticated requests are denied by default.
+- Peer may be null.
+- Without an explicit allow rule for null peer, unauthenticated requests are denied by default.
 
 ## PDP layer
 
 Absent identity is not an error — it is represented as null and passed to CEL:
 
-- No peer certificate or parse failure → `actor = null`
-- JWT metadata absent → `subject.jwt = null`
+- No peer certificate or parse failure → `peer = null`
+- JWT metadata absent → `jwt = null`
 
 Policy is responsible for handling null explicitly. A rule that accesses a null
 value without a guard produces a CEL evaluation error, which results in an
@@ -346,7 +337,7 @@ Never:
 
 ```text
 cmd/pdp/main.go        – gRPC server + wiring
-pdp/model/actor/       – actor/certificate parsing
+pdp/model/peer/        – peer/certificate parsing
 pdp/model/subject/     - subject/jwt parsing
 pdp/model/operation/   - operation parsing
 pdp/cel/               – CEL evaluator
@@ -358,8 +349,8 @@ Core flow inside `Check()` function implemented in main.go:
 
 1. Extract `resource` from `req.Attributes.Request.Http.Path`
 2. Extract `action` from `req.Attributes.Request.Http.Method`
-3. Extract `subject.jwt` from `FilterMetadata["envoy.filters.http.jwt_authn"][<-jwt-metadata-key>]` → null if absent
-4. Extract `actor` from `req.Attributes.Source.Certificate` → null if absent or parse failure
+3. Extract `jwt` from `FilterMetadata["envoy.filters.http.jwt_authn"][<-jwt-metadata-key>]` → null if absent
+4. Extract `peer` from `req.Attributes.Source.Certificate` → null if absent or parse failure
 5. Extract `operation` fields from route `FilterMetadata["pdp"]` → empty strings if absent
 6. Build CEL activation map
 7. Evaluate rules in order; on first match apply decision and return
@@ -371,7 +362,7 @@ Core flow inside `Check()` function implemented in main.go:
 # 7. Security Invariants
 
 These must not be violated:
-1. Actor identity must never be derived from headers.
+1. Peer identity must never be derived from headers.
 2. JWT must never be re-validated in PDP
 3. Absence of identity must not be encoded as a magic string.
 4. Policy compilation must occur at startup only.
@@ -391,7 +382,7 @@ Each component writes to a named `log/slog` logger. Records include a `"logger"`
 | `server` | `cmd/pdp` | startup flags, listen address, per-request audit decision, shutdown |
 | `cel` | `pdp/cel` | compiled N rules (INFO); per-rule result (DEBUG); CEL eval error (WARN) |
 | `policy` | `pdp/policy` | policy loaded: path, version, rule count (INFO); validation error (ERROR) |
-| `input` | `pdp/model/actor`, `pdp/model/subject`, `pdp/model/operation` | actor parse failure (WARN); jwt/operation metadata absent (DEBUG) |
+| `input` | `pdp/model/peer`, `pdp/model/subject`, `pdp/model/operation` | peer parse failure (WARN); jwt/operation metadata absent (DEBUG) |
 
 ## Log level flag
 
@@ -414,16 +405,16 @@ Valid levels: `debug`, `info`, `warn`, `error` (case-insensitive).
 One structured line per request logged by the `server` logger:
 
 ```json
-{"logger":"server","msg":"decision","actor_cn":"svc-a","resource":"/v1/orders","action":"GET","rule":"allow-service-readonly","allow":true}
+{"logger":"server","msg":"decision","peer_cn":"svc-a","resource":"/v1/orders","action":"GET","rule":"allow-service-readonly","allow":true}
 ```
 
-`actor_cn` is `""` when actor is null (no peer certificate). `rule` is `""` when no rule matched or a CEL error occurred.
+`peer_cn` is `""` when peer is null (no peer certificate). `rule` is `""` when no rule matched or a CEL error occurred.
 
 ## Security constraints
 
 - JWT claim values are never logged.
 - Certificate DER/PEM content is never logged.
-- Only `actor.cn` is logged (not `auid`, not full DN).
+- Only `peer.cn` is logged (not `auid`, not full DN).
 - `resource` and `action` are HTTP transport metadata and are safe to log.
 
 ---
@@ -433,6 +424,7 @@ One structured line per request logged by the `server` logger:
 | ADR | Title | Status |
 |-----|-------|--------|
 | [ADR-001](docs/adr/001-operation-id-vs-path-verb.md) | Operation ID as primary authorization axis | Accepted |
+| [ADR-002](docs/adr/002-cel-variable-naming-and-null-coherence.md) | CEL variable naming and null-check coherence | Accepted |
 
 ---
 
