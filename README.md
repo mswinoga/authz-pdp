@@ -1,6 +1,4 @@
-# CLAUDE.md
-
-## Project: PDP (Policy Decision Point)
+# Project: PDP (Policy Decision Point)
 
 This repository implements a standalone **Policy Decision Point (PDP)** consumed by **Envoy** via the `ext_authz` gRPC API.
 
