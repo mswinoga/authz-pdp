@@ -24,6 +24,7 @@ var auidPattern = regexp.MustCompile(`^a[p0-9][0-9]{5}$`)
 // Returns nil if the input is empty or cannot be parsed.
 func Parse(certStr string) *pdppb.Peer {
 	if certStr == "" {
+		logger.Debug("no peer certificate — mTLS not configured or client did not present a cert")
 		return nil
 	}
 
@@ -39,7 +40,7 @@ func Parse(certStr string) *pdppb.Peer {
 		return nil
 	}
 
-	return &pdppb.Peer{
+	peer := &pdppb.Peer{
 		Cn:   cert.Subject.CommonName,
 		Dn:   dnString(cert.Subject.ToRDNSequence()),
 		Auid: extractAUID(cert.Subject.OrganizationalUnit),
@@ -47,6 +48,8 @@ func Parse(certStr string) *pdppb.Peer {
 		Idn:  dnString(cert.Issuer.ToRDNSequence()),
 		Uri:  extractURISAN(cert),
 	}
+	logger.Debug("peer extracted", "cn", peer.Cn, "auid", peer.Auid, "uri", peer.Uri)
+	return peer
 }
 
 // parseCert attempts DER first, then PEM.

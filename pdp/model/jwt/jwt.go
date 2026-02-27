@@ -20,20 +20,31 @@ const jwtAuthnFilterName = "envoy.filters.http.jwt_authn"
 func Extract(req *envoy_auth.CheckRequest, jwtMetadataKey string) *structpb.Struct {
 	filterMeta := req.GetAttributes().GetMetadataContext().GetFilterMetadata()
 	if filterMeta == nil {
+		logger.Debug("filter_metadata absent — check metadata_context_namespaces in ext_authz config")
 		return nil
 	}
 
 	jwtAuthnMeta, ok := filterMeta[jwtAuthnFilterName]
 	if !ok || jwtAuthnMeta == nil {
+		logger.Debug("jwt_authn namespace absent from filter_metadata — check metadata_context_namespaces in ext_authz config",
+			"namespace", jwtAuthnFilterName)
 		return nil
 	}
 
 	val, ok := jwtAuthnMeta.Fields[jwtMetadataKey]
 	if !ok || val == nil {
-		logger.Debug("jwt metadata absent", "key", jwtMetadataKey)
+		logger.Debug("jwt payload key absent — check payload_in_metadata in jwt_authn provider config matches -jwt-metadata-key flag",
+			"key", jwtMetadataKey)
 		return nil
 	}
 
 	// GetStructValue returns nil if the Value is not of Struct kind.
-	return val.GetStructValue()
+	s := val.GetStructValue()
+	if s == nil {
+		logger.Debug("jwt metadata value is not a Struct", "key", jwtMetadataKey)
+		return nil
+	}
+
+	logger.Debug("jwt extracted", "claims", len(s.Fields))
+	return s
 }

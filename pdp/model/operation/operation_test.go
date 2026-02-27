@@ -19,7 +19,7 @@ func makeReq(pdpFields map[string]any) *envoy_auth.CheckRequest {
 	}
 	return &envoy_auth.CheckRequest{
 		Attributes: &envoy_auth.AttributeContext{
-			MetadataContext: &core.Metadata{
+			RouteMetadataContext: &core.Metadata{
 				FilterMetadata: filterMeta,
 			},
 		},

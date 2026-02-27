@@ -17,17 +17,24 @@ const pdpFilterName = "pdp"
 
 // Extract builds an Operation from the ext_authz CheckRequest route metadata.
 // Never returns nil. All fields are "" when the route carries no pdp metadata.
+// Route metadata is read from route_metadata_context, which requires
+// route_metadata_context_namespaces: [pdp] in the ext_authz filter config.
 func Extract(req *envoy_auth.CheckRequest) *pdppb.Operation {
-	filterMeta := req.GetAttributes().GetMetadataContext().GetFilterMetadata()
-	pdpMeta, ok := filterMeta[pdpFilterName]
+	routeMeta := req.GetAttributes().GetRouteMetadataContext().GetFilterMetadata()
+	pdpMeta, ok := routeMeta[pdpFilterName]
 	if !ok || pdpMeta == nil {
-		logger.Debug("operation metadata absent")
+		logger.Debug("operation metadata absent — check route_metadata_context_namespaces in ext_authz config",
+			"namespace", pdpFilterName)
 	}
-	return &pdppb.Operation{
+	op := &pdppb.Operation{
 		Id:      stringField(pdpMeta, "operation_id"),
 		Scope:   stringField(pdpMeta, "scope"),
 		Version: stringField(pdpMeta, "version"),
 	}
+	if ok {
+		logger.Debug("operation extracted", "id", op.Id, "scope", op.Scope, "version", op.Version)
+	}
+	return op
 }
 
 // stringField extracts a string value from a structpb.Struct field.
