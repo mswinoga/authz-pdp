@@ -19,9 +19,9 @@ import (
 
 	"github.com/marcin/authz-pdp/internal/logsetup"
 	"github.com/marcin/authz-pdp/pdp/cel"
-	peerpkg "github.com/marcin/authz-pdp/pdp/model/peer"
+	jwtpkg "github.com/marcin/authz-pdp/pdp/model/jwt"
 	operationpkg "github.com/marcin/authz-pdp/pdp/model/operation"
-	subjectpkg "github.com/marcin/authz-pdp/pdp/model/subject"
+	peerpkg "github.com/marcin/authz-pdp/pdp/model/peer"
 	"github.com/marcin/authz-pdp/pdp/policy"
 )
 
@@ -75,9 +75,9 @@ func main() {
 		"log-level", *logLevelFlag,
 	)
 
-	peerpkg.SetLogger(loggers["input"])
-	subjectpkg.SetLogger(loggers["input"])
+	jwtpkg.SetLogger(loggers["input"])
 	operationpkg.SetLogger(loggers["input"])
+	peerpkg.SetLogger(loggers["input"])
 
 	p, err := policy.LoadFile(*policyFile, loggers["policy"])
 	if err != nil {
@@ -128,12 +128,12 @@ func (s *server) Check(
 	action := req.GetAttributes().GetRequest().GetHttp().GetMethod()
 
 	peer := peerpkg.Parse(req.GetAttributes().GetSource().GetCertificate())
-	subject := subjectpkg.Extract(req, s.jwtMetadataKey)
+	jwt := jwtpkg.Extract(req, s.jwtMetadataKey)
 	operation := operationpkg.Extract(req)
 
 	allow, ruleID := s.evaluator.Evaluate(cel.EvalContext{
 		Peer:      peer,
-		Subject:   subject,
+		Jwt:       jwt,
 		Operation: operation,
 		Resource:  resource,
 		Action:    action,

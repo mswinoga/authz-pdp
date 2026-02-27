@@ -8,13 +8,14 @@ import (
 	"github.com/google/cel-go/common/types"
 	pdppb "github.com/marcin/authz-pdp/pdp/gen/pdp"
 	"github.com/marcin/authz-pdp/pdp/policy"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // EvalContext holds the per-request input variables passed to CEL.
 type EvalContext struct {
-	Peer      *pdppb.Peer      // nil when no peer cert or cert parse failure
-	Subject   *pdppb.Subject   // never nil; Subject.Jwt may be nil — not a CEL variable
-	Operation *pdppb.Operation // never nil; fields may be ""
+	Peer      *pdppb.Peer       // nil when no peer cert or cert parse failure
+	Jwt       *structpb.Struct  // nil when jwt_authn metadata absent
+	Operation *pdppb.Operation  // never nil; fields may be ""
 	Resource  string
 	Action    string
 }
@@ -113,8 +114,8 @@ func buildActivation(ctx EvalContext) map[string]any {
 		peerVal = ctx.Peer
 	}
 	var jwtVal any = types.NullValue
-	if ctx.Subject != nil && ctx.Subject.Jwt != nil {
-		jwtVal = ctx.Subject.Jwt
+	if ctx.Jwt != nil {
+		jwtVal = ctx.Jwt
 	}
 	return map[string]any{
 		"peer":      peerVal,

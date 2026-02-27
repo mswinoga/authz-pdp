@@ -6,7 +6,7 @@ The PDP:
 
 - Receives authorization requests from Envoy
 - Extracts:
-  - **subject** from a verified unified JWT (provided by Envoy `jwt_authn`)
+  - **jwt** (JWT claims) from a verified unified JWT (provided by Envoy `jwt_authn`)
   - **peer** from downstream mTLS client certificate
 - Evaluates a **CEL** policy expression
 - Returns allow/deny decision to Envoy
@@ -54,7 +54,7 @@ The PDP **does not**:
 # 2.  Input Model
 
 
-## 2.1 Subject
+## 2.1 JWT
 
 Derived from unified JWT validated by Envoy.
 
@@ -68,8 +68,6 @@ PDP reads JWT claims from:
 
 where `<key>` is configured via the `-jwt-metadata-key` startup flag. It must match
 the `payload_in_metadata` value in the Envoy `jwt_authn` provider configuration.
-
-`subject` is an internal Go model only — it is NOT exposed as a CEL variable.
 
 `jwt` is a top-level CEL variable (see §4) carrying the decoded JWT claims:
 
@@ -274,11 +272,6 @@ The `has()` macro is available for proto3 fields and checks for a non-zero value
 has(peer.uri)   # true iff peer.uri != "" — shorthand for "cert had a URI SAN"
 ```
 
-**`subject` — internal Go model only**
-
-`subject` is an internal Go model and is NOT exposed as a CEL variable. The `jwt`
-top-level variable replaces it in the CEL environment.
-
 **`jwt` — top-level nullable variable**
 
 `jwt` is declared as `cel.DynType`. Although `google.protobuf.Struct` is a CEL Well-Known Type, its WKT adapter converts it to `map(string, dyn)`, which has no `== null` overload. `dyn` allows `jwt == null` while still supporting map access `jwt["sub"]` at runtime. The tradeoff — no compile-time validation of jwt access patterns — is acceptable because JWT claim names are dynamic by nature.
@@ -334,13 +327,12 @@ Never:
 > Detailed implementation plan: [docs/implementation-plan.md](docs/implementation-plan.md)
 
 ```text
-cmd/pdp/main.go        – gRPC server + wiring
-pdp/model/peer/        – peer/certificate parsing
-pdp/model/subject/     - subject/jwt parsing
-pdp/model/operation/   - operation parsing
-pdp/cel/               – CEL evaluator
-├── internal/
-│   └── logsetup/           named-logger level parsing and construction
+cmd/pdp/main.go            – gRPC server + wiring
+pdp/model/peer/            – peer/certificate parsing
+pdp/model/jwt/             – JWT claims extraction from filter metadata
+pdp/model/operation/       – operation parsing from route filter metadata
+pdp/cel/                   – CEL evaluator
+internal/logsetup/         – named-logger level parsing and construction
 ```
 
 Core flow inside `Check()` function implemented in main.go:
@@ -380,7 +372,7 @@ Each component writes to a named `log/slog` logger. Records include a `"logger"`
 | `server` | `cmd/pdp` | startup flags, listen address, per-request audit decision, shutdown |
 | `cel` | `pdp/cel` | compiled N rules (INFO); per-rule result (DEBUG); CEL eval error (WARN) |
 | `policy` | `pdp/policy` | policy loaded: path, version, rule count (INFO); validation error (ERROR) |
-| `input` | `pdp/model/peer`, `pdp/model/subject`, `pdp/model/operation` | peer parse failure (WARN); jwt/operation metadata absent (DEBUG) |
+| `input` | `pdp/model/peer`, `pdp/model/jwt`, `pdp/model/operation` | peer parse failure (WARN); jwt/operation metadata absent (DEBUG) |
 
 ## Log level flag
 

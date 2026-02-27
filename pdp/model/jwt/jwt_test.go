@@ -1,4 +1,4 @@
-package subject
+package jwt
 
 import (
 	"testing"
@@ -29,18 +29,18 @@ func TestExtract(t *testing.T) {
 	tests := []struct {
 		name       string
 		req        *envoy_auth.CheckRequest
-		wantJwtNil bool
+		wantNil    bool
 		wantSub    string
 	}{
 		{
-			name:       "nil attributes",
-			req:        &envoy_auth.CheckRequest{},
-			wantJwtNil: true,
+			name:    "nil attributes",
+			req:     &envoy_auth.CheckRequest{},
+			wantNil: true,
 		},
 		{
-			name:       "jwt_authn filter absent",
-			req:        makeReq(map[string]*structpb.Struct{}),
-			wantJwtNil: true,
+			name:    "jwt_authn filter absent",
+			req:     makeReq(map[string]*structpb.Struct{}),
+			wantNil: true,
 		},
 		{
 			name: "configured key absent in jwt_authn metadata",
@@ -49,7 +49,7 @@ func TestExtract(t *testing.T) {
 					"other_key": structpb.NewStringValue("x"),
 				}},
 			}),
-			wantJwtNil: true,
+			wantNil: true,
 		},
 		{
 			name: "value is not a Struct kind (string value)",
@@ -58,7 +58,7 @@ func TestExtract(t *testing.T) {
 					testKey: structpb.NewStringValue("not-a-struct"),
 				}},
 			}),
-			wantJwtNil: true,
+			wantNil: true,
 		},
 		{
 			name: "valid JWT struct",
@@ -67,27 +67,24 @@ func TestExtract(t *testing.T) {
 					testKey: structpb.NewStructValue(validJWT),
 				}},
 			}),
-			wantJwtNil: false,
-			wantSub:    "alice",
+			wantNil: false,
+			wantSub: "alice",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Extract(tc.req, testKey)
-			if got == nil {
-				t.Fatal("Extract must never return nil")
-			}
-			if tc.wantJwtNil {
-				if got.Jwt != nil {
-					t.Errorf("expected Jwt nil, got %+v", got.Jwt)
+			if tc.wantNil {
+				if got != nil {
+					t.Errorf("expected nil, got %+v", got)
 				}
 				return
 			}
-			if got.Jwt == nil {
-				t.Fatal("expected Jwt non-nil")
+			if got == nil {
+				t.Fatal("expected non-nil *structpb.Struct")
 			}
-			sub := got.Jwt.Fields["sub"].GetStringValue()
+			sub := got.Fields["sub"].GetStringValue()
 			if sub != tc.wantSub {
 				t.Errorf("sub: want %q, got %q", tc.wantSub, sub)
 			}

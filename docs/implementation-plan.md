@@ -17,7 +17,7 @@ authz-pdp/
 │       └── main.go                 gRPC server, flag parsing, Check() handler
 ├── pdp/
 │   ├── proto/
-│   │   └── model.proto             Actor, Subject, Operation proto definitions
+│   │   └── model.proto             Peer, Operation proto definitions
 │   ├── gen/
 │   │   └── pdp/
 │   │       └── model.pb.go         generated — do not edit
@@ -25,9 +25,9 @@ authz-pdp/
 │   │   ├── peer/
 │   │   │   ├── peer.go             certificate → *Peer (nil on absent/error)
 │   │   │   └── peer_test.go
-│   │   ├── subject/
-│   │   │   ├── subject.go          filter metadata → *Subject (jwt nil if absent)
-│   │   │   └── subject_test.go
+│   │   ├── jwt/
+│   │   │   ├── jwt.go              filter metadata → *structpb.Struct (nil if absent)
+│   │   │   └── jwt_test.go
 │   │   └── operation/
 │   │       ├── operation.go        route metadata → *Operation (empty strings if absent)
 │   │       └── operation_test.go
@@ -90,10 +90,6 @@ message Peer {
   string uri  = 6;   // URI SAN (e.g. SPIFFE ID); "" if absent
 }
 
-message Subject {
-  google.protobuf.Struct jwt = 1;  // null when jwt_authn metadata absent
-}
-
 message Operation {
   string id      = 1;  // from operation_id key in filter_metadata.pdp; "" if absent
   string scope   = 2;
@@ -103,7 +99,7 @@ message Operation {
 
 Run `make generate` after any proto change. Generated output goes to `pdp/gen/pdp/`.
 
-Note: the `Subject` message is an internal Go model only. It is not declared as a CEL variable (see Phase 5).
+Note: `Subject` was removed (Phase 8). JWT claims are extracted directly as `*structpb.Struct` by `pdp/model/jwt`.
 
 ---
 
@@ -144,33 +140,30 @@ Compile `auidPattern = regexp.MustCompile(...)` once at package init.
 - cert with matching OU → auid populated
 - cert with no matching OU → auid `""`
 
-### 3.2 `pdp/model/subject`
+### 3.2 `pdp/model/jwt`
 
 **Input:** `req`, `-jwt-metadata-key` flag value.
 
-**Output:** `*pdppb.Subject` (never nil; `Jwt` field is nil when metadata absent).
+**Output:** `*structpb.Struct` (nil when metadata absent).
 
 ```
-func Extract(req *envoy_auth.CheckRequest, jwtMetadataKey string) *pdppb.Subject
+func Extract(req *envoy_auth.CheckRequest, jwtMetadataKey string) *structpb.Struct
 ```
-
-`Subject` is an internal Go model. It is **not** declared as a CEL variable. The `jwt` top-level variable is populated directly from `Subject.Jwt` in the CEL activation (see Phase 5).
 
 Steps:
 1. Navigate: `req.Attributes.MetadataContext.FilterMetadata["envoy.filters.http.jwt_authn"]`
-   → `*structpb.Struct`. Return `&Subject{Jwt: nil}` if absent.
+   → `*structpb.Struct`. Return `nil` if absent.
 2. Index by `jwtMetadataKey`: `struct.Fields[jwtMetadataKey]` → `*structpb.Value`.
-   Return `&Subject{Jwt: nil}` if absent.
-3. Call `.GetStructValue()` on the value → `*structpb.Struct`.
-   Returns nil if the value is not of Struct kind.
-4. Return `&Subject{Jwt: structValue}`.
+   Return `nil` if absent.
+3. Call `.GetStructValue()` on the value — returns `nil` if not Struct kind.
+4. Return the `*structpb.Struct` directly.
 
 **Tests:**
-- nil filter metadata → `Subject{Jwt: nil}`
-- jwt_authn key absent → `Subject{Jwt: nil}`
-- configured key absent in jwt_authn metadata → `Subject{Jwt: nil}`
-- value is not a Struct kind → `Subject{Jwt: nil}`
-- valid JWT struct → `Subject{Jwt: <populated>}`
+- nil filter metadata → `nil`
+- jwt_authn key absent → `nil`
+- configured key absent in jwt_authn metadata → `nil`
+- value is not a Struct kind → `nil`
+- valid JWT struct → populated `*structpb.Struct`
 
 ### 3.3 `pdp/model/operation`
 
@@ -295,13 +288,16 @@ For each rule in order:
 
 Any error here is fatal: service must not start with an invalid policy.
 
-**Per-request — `Evaluate(ctx EvalContext) bool`:**
+**Per-request — `Evaluate(ctx EvalContext) (bool, string)`:**
+
+Returns `(allow bool, matchedRule string)`. `matchedRule` is `""` when no rule
+matched or a CEL error occurred (used for audit logging).
 
 ```go
 type EvalContext struct {
-    Peer      *pdppb.Peer     // nil if no cert
-    Subject   *pdppb.Subject  // never nil; Subject.Jwt may be nil
-    Operation *pdppb.Operation
+    Peer      *pdppb.Peer      // nil when no peer cert or parse failure
+    Jwt       *structpb.Struct // nil when jwt_authn metadata absent
+    Operation *pdppb.Operation // never nil; fields may be ""
     Resource  string
     Action    string
 }
@@ -309,13 +305,13 @@ type EvalContext struct {
 
 Build activation:
 ```go
-peerVal := types.NullValue
+var peerVal any = types.NullValue
 if ctx.Peer != nil {
     peerVal = ctx.Peer
 }
-jwtVal := types.NullValue
-if ctx.Subject != nil && ctx.Subject.Jwt != nil {
-    jwtVal = ctx.Subject.Jwt
+var jwtVal any = types.NullValue
+if ctx.Jwt != nil {
+    jwtVal = ctx.Jwt
 }
 activation := map[string]any{
     "peer":      peerVal,
@@ -385,19 +381,30 @@ func (s *server) Check(
     req *envoy_auth.CheckRequest,
 ) (*envoy_auth.CheckResponse, error) {
 
-    resource := req.GetAttributes().GetRequest().GetHttp().GetPath()
-    action   := req.GetAttributes().GetRequest().GetHttp().GetMethod()
-    subject  := subject.Extract(req, s.jwtMetadataKey)
-    peer     := peer.Parse(req.GetAttributes().GetSource().GetCertificate())
+    resource  := req.GetAttributes().GetRequest().GetHttp().GetPath()
+    action    := req.GetAttributes().GetRequest().GetHttp().GetMethod()
+    peer      := peer.Parse(req.GetAttributes().GetSource().GetCertificate())
+    jwt       := jwt.Extract(req, s.jwtMetadataKey)
     operation := operation.Extract(req)
 
-    allow := s.evaluator.Evaluate(cel.EvalContext{
+    allow, ruleID := s.evaluator.Evaluate(cel.EvalContext{
         Peer:      peer,
-        Subject:   subject,
+        Jwt:       jwt,
         Operation: operation,
         Resource:  resource,
         Action:    action,
     })
+
+    // Audit log — one structured line per request.
+    peerCN := ""
+    if peer != nil { peerCN = peer.Cn }
+    s.logger.Info("decision",
+        "peer_cn", peerCN,
+        "resource", resource,
+        "action", action,
+        "rule", ruleID,
+        "allow", allow,
+    )
 
     if allow {
         return okResponse(), nil
@@ -406,8 +413,8 @@ func (s *server) Check(
 }
 ```
 
-`okResponse()` → `CheckResponse` with HTTP 200.
-`deniedResponse()` → `CheckResponse` with HTTP 403.
+`okResponse()` → `CheckResponse` with HTTP 200 / gRPC OK.
+`deniedResponse()` → `CheckResponse` with HTTP 403 / gRPC PermissionDenied.
 
 No errors are returned from `Check()` — all error paths map to deny internally.
 
@@ -449,10 +456,11 @@ Phase 1 (bootstrap)
             ├── Phase 4 (policy)           ← independent of model packages
             └── Phase 5 (cel)              ← depends on proto + policy
                     └── Phase 6 (server)   ← depends on all above
-                            └── Phase 7 (integration tests)
+                            ├── Phase 7 (integration tests)
+                            └── Phase 8 (subject cleanup)  ← depends on phases 3–6
 ```
 
-Phases 3a/3b/3c (peer/subject/operation) and Phase 4 (policy) can be
+Phases 3a/3b/3c (peer/jwt/operation) and Phase 4 (policy) can be
 developed in parallel after Phase 2 completes.
 
 ---
@@ -471,3 +479,113 @@ developed in parallel after Phase 2 completes.
 5. **Certificate encoding** — Envoy documents `Source.Certificate` as URL-encoded DER.
    Verify against actual Envoy behaviour in the target environment; some versions
    produce URL-encoded PEM instead.
+
+---
+
+## Phase 8 — Subject Model Cleanup ✓
+
+**Goal:** Remove the `Subject` proto wrapper and have `pdp/model/jwt` return
+`*structpb.Struct` directly. This eliminates the indirection between the Go extraction
+layer and the CEL `jwt` variable: both operate on the same type with no
+intermediate wrapping.
+
+**Motivation:** `jwt` is already a top-level `dyn` variable in the CEL environment.
+The current `EvalContext.Subject *pdppb.Subject` wrapper is an artifact of the
+pre-ADR-002 design where `subject` was a CEL variable. The wrapper adds a layer of
+indirection (`.Subject.Jwt`) that obscures the direct correspondence between
+extracted data and CEL variable.
+
+### 8.1 Remove `Subject` from proto
+
+Remove `message Subject` from `pdp/proto/model.proto`. Regenerate `pdp/gen/pdp/`.
+
+```proto
+// Remove this message entirely:
+message Subject {
+  google.protobuf.Struct jwt = 1;
+}
+```
+
+### 8.2 Update `pdp/model/subject`
+
+Change `Extract()` to return `*structpb.Struct` directly (nil when absent):
+
+```go
+// Before:
+func Extract(req *envoy_auth.CheckRequest, jwtMetadataKey string) *pdppb.Subject
+
+// After:
+func Extract(req *envoy_auth.CheckRequest, jwtMetadataKey string) *structpb.Struct
+```
+
+Return `nil` (not a non-nil struct with a nil field) when JWT metadata is absent.
+This matches the null semantics used by `peer.Parse` and the CEL activation.
+
+Consider renaming the package from `pdp/model/subject` to `pdp/model/jwt` so the
+Go package name aligns with the CEL variable name.
+
+### 8.3 Update `EvalContext`
+
+Remove the `Subject` field; replace with `Jwt`:
+
+```go
+// Before:
+type EvalContext struct {
+    Peer      *pdppb.Peer
+    Subject   *pdppb.Subject   // never nil; Subject.Jwt may be nil
+    Operation *pdppb.Operation
+    Resource  string
+    Action    string
+}
+
+// After:
+type EvalContext struct {
+    Peer      *pdppb.Peer
+    Jwt       *structpb.Struct  // nil when JWT metadata absent
+    Operation *pdppb.Operation
+    Resource  string
+    Action    string
+}
+```
+
+### 8.4 Update `buildActivation`
+
+```go
+// Before:
+var jwtVal any = types.NullValue
+if ctx.Subject != nil && ctx.Subject.Jwt != nil {
+    jwtVal = ctx.Subject.Jwt
+}
+
+// After:
+var jwtVal any = types.NullValue
+if ctx.Jwt != nil {
+    jwtVal = ctx.Jwt
+}
+```
+
+### 8.5 Update `cmd/pdp/main.go`
+
+```go
+// Before:
+subject := subjectpkg.Extract(req, s.jwtMetadataKey)
+s.evaluator.Evaluate(cel.EvalContext{
+    Peer:      peer,
+    Subject:   subject,
+    ...
+})
+
+// After (package renamed to jwtpkg):
+jwt := jwtpkg.Extract(req, s.jwtMetadataKey)
+s.evaluator.Evaluate(cel.EvalContext{
+    Peer: peer,
+    Jwt:  jwt,
+    ...
+})
+```
+
+### 8.6 Update tests
+
+- `pdp/model/subject` (or `pdp/model/jwt`): tests assert `*structpb.Struct` or nil directly.
+- `pdp/cel/evaluator_test.go`: `EvalContext` literals use `Jwt:` field instead of `Subject:`.
+- `cmd/pdp/main.go` logger table: rename `input` logger description if package is renamed.

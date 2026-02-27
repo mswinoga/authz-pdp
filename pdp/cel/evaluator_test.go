@@ -45,9 +45,6 @@ var (
 	emptyOp  = &pdppb.Operation{}
 )
 
-func subjectWith(jwt *structpb.Struct) *pdppb.Subject { return &pdppb.Subject{Jwt: jwt} }
-func subjectNil() *pdppb.Subject                      { return &pdppb.Subject{} }
-
 func TestEvaluate(t *testing.T) {
 	const basePolicy = `
 version: 1
@@ -74,32 +71,32 @@ rules:
 	}{
 		{
 			name:      "null peer → deny via deny-no-identity",
-			ctx:       EvalContext{Peer: nil, Subject: subjectWith(someJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       EvalContext{Peer: nil, Jwt: someJWT, Operation: someOp, Resource: "/orders", Action: "GET"},
 			wantAllow: false,
 		},
 		{
 			name:      "null jwt → deny via deny-no-identity",
-			ctx:       EvalContext{Peer: somePeer, Subject: subjectNil(), Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       EvalContext{Peer: somePeer, Jwt: nil, Operation: someOp, Resource: "/orders", Action: "GET"},
 			wantAllow: false,
 		},
 		{
 			name:      "admin JWT → allow via allow-admin",
-			ctx:       EvalContext{Peer: somePeer, Subject: subjectWith(adminJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       EvalContext{Peer: somePeer, Jwt: adminJWT, Operation: someOp, Resource: "/orders", Action: "GET"},
 			wantAllow: true,
 		},
 		{
 			name:      "matching service + operation → allow",
-			ctx:       EvalContext{Peer: somePeer, Subject: subjectWith(someJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       EvalContext{Peer: somePeer, Jwt: someJWT, Operation: someOp, Resource: "/orders", Action: "GET"},
 			wantAllow: true,
 		},
 		{
 			name:      "wrong operation id → deny via deny-all",
-			ctx:       EvalContext{Peer: somePeer, Subject: subjectWith(someJWT), Operation: &pdppb.Operation{Id: "Order_Delete"}, Resource: "/orders", Action: "DELETE"},
+			ctx:       EvalContext{Peer: somePeer, Jwt: someJWT, Operation: &pdppb.Operation{Id: "Order_Delete"}, Resource: "/orders", Action: "DELETE"},
 			wantAllow: false,
 		},
 		{
 			name:      "wrong CN → deny via deny-all",
-			ctx:       EvalContext{Peer: &pdppb.Peer{Cn: "svc-b", Auid: "ap12345"}, Subject: subjectWith(someJWT), Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       EvalContext{Peer: &pdppb.Peer{Cn: "svc-b", Auid: "ap12345"}, Jwt: someJWT, Operation: someOp, Resource: "/orders", Action: "GET"},
 			wantAllow: false,
 		},
 	}
@@ -126,7 +123,7 @@ rules:
 	ev := newEvaluator(t, p)
 	ctx := EvalContext{
 		Peer:      nil, // null peer
-		Subject:   subjectWith(someJWT),
+		Jwt:       someJWT,
 		Operation: emptyOp,
 		Resource:  "/",
 		Action:    "GET",
@@ -147,7 +144,7 @@ rules:
 	ev := newEvaluator(t, p)
 	ctx := EvalContext{
 		Peer:      somePeer,
-		Subject:   subjectWith(someJWT),
+		Jwt:       someJWT,
 		Operation: emptyOp,
 		Resource:  "/",
 		Action:    "GET",
@@ -171,7 +168,7 @@ rules:
 	ev := newEvaluator(t, p)
 	ctx := EvalContext{
 		Peer:      nil, // causes error in rule 1
-		Subject:   subjectWith(someJWT),
+		Jwt:       someJWT,
 		Operation: emptyOp,
 		Resource:  "/",
 		Action:    "GET",
@@ -196,10 +193,10 @@ rules:
 	withURI := &pdppb.Peer{Cn: "svc", Uri: "spiffe://prod/svc"}
 	withoutURI := &pdppb.Peer{Cn: "svc", Uri: ""}
 
-	if got, _ := ev.Evaluate(EvalContext{Peer: withURI, Subject: subjectWith(someJWT), Operation: emptyOp, Resource: "/", Action: "GET"}); !got {
+	if got, _ := ev.Evaluate(EvalContext{Peer: withURI, Jwt: someJWT, Operation: emptyOp, Resource: "/", Action: "GET"}); !got {
 		t.Error("expected allow when peer has URI")
 	}
-	if got, _ := ev.Evaluate(EvalContext{Peer: withoutURI, Subject: subjectWith(someJWT), Operation: emptyOp, Resource: "/", Action: "GET"}); got {
+	if got, _ := ev.Evaluate(EvalContext{Peer: withoutURI, Jwt: someJWT, Operation: emptyOp, Resource: "/", Action: "GET"}); got {
 		t.Error("expected deny when peer has no URI")
 	}
 }

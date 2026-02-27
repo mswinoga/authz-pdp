@@ -4,8 +4,6 @@ package pdp;
 
 option go_package = "github.com/marcin/authz-pdp/pdp/gen/pdp";
 
-import "google/protobuf/struct.proto";
-
 message Peer {
   string cn   = 1; // Subject CN; "" if absent
   string dn   = 2; // Subject DN (RFC 4514)
@@ -13,10 +11,6 @@ message Peer {
   string icn  = 4; // Issuer CN
   string idn  = 5; // Issuer DN
   string uri  = 6; // URI SAN (e.g. SPIFFE ID); "" if absent
-}
-
-message Subject {
-  google.protobuf.Struct jwt = 1; // null when jwt_authn metadata absent
 }
 
 message Operation {
