@@ -1,6 +1,6 @@
 module github.com/marcin/authz-pdp
 
-go 1.24.0
+go 1.24.13
 
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
