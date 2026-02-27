@@ -327,7 +327,7 @@ Never:
 > Detailed implementation plan: [docs/implementation-plan.md](docs/implementation-plan.md)
 
 ```text
-cmd/pdp/main.go            – gRPC server + wiring
+cmd/pdp-server/main.go            – gRPC server + wiring
 pdp/model/peer/            – peer/certificate parsing
 pdp/model/jwt/             – JWT claims extraction from filter metadata
 pdp/model/operation/       – operation parsing from route filter metadata
@@ -369,7 +369,7 @@ Each component writes to a named `log/slog` logger. Records include a `"logger"`
 
 | Name | Component | Key events |
 |------|-----------|------------|
-| `server` | `cmd/pdp` | startup flags, listen address, per-request audit decision, shutdown |
+| `server` | `cmd/pdp-server` | startup flags, listen address, per-request audit decision, shutdown |
 | `cel` | `pdp/cel` | compiled N rules (INFO); per-rule result (DEBUG); CEL eval error (WARN) |
 | `policy` | `pdp/policy` | policy loaded: path, version, rule count (INFO); validation error (ERROR) |
 | `input` | `pdp/model/peer`, `pdp/model/jwt`, `pdp/model/operation` | peer parse failure (WARN); jwt/operation metadata absent (DEBUG) |

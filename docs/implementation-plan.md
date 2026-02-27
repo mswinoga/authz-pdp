@@ -3,7 +3,7 @@
 ## Overview
 
 Go service implementing a gRPC ext_authz Policy Decision Point. The implementation
-is structured as a set of focused packages assembled in `cmd/pdp/main.go`. Policy
+is structured as a set of focused packages assembled in `cmd/pdp-server/main.go`. Policy
 is compiled once at startup; every request is a pure in-memory evaluation.
 
 ---
@@ -354,7 +354,7 @@ policy YAML. Cover:
 
 ---
 
-## Phase 6 — gRPC Server (`cmd/pdp/main.go`)
+## Phase 6 — gRPC Server (`cmd/pdp-server/main.go`)
 
 ### Startup flags
 
@@ -426,7 +426,7 @@ No errors are returned from `Check()` — all error paths map to deny internally
 
 Covered in each phase above. Test files live alongside implementation files.
 
-### Integration test (`cmd/pdp/main_test.go` or `pdp/cel/evaluator_test.go`)
+### Integration test (`cmd/pdp-server/main_test.go` or `pdp/cel/evaluator_test.go`)
 
 End-to-end evaluation using a synthetic `CheckRequest` and a real policy.
 Does not spin up a gRPC server — calls `Check()` logic directly.
@@ -564,7 +564,7 @@ if ctx.Jwt != nil {
 }
 ```
 
-### 8.5 Update `cmd/pdp/main.go`
+### 8.5 Update `cmd/pdp-server/main.go`
 
 ```go
 // Before:
@@ -588,4 +588,4 @@ s.evaluator.Evaluate(cel.EvalContext{
 
 - `pdp/model/subject` (or `pdp/model/jwt`): tests assert `*structpb.Struct` or nil directly.
 - `pdp/cel/evaluator_test.go`: `EvalContext` literals use `Jwt:` field instead of `Subject:`.
-- `cmd/pdp/main.go` logger table: rename `input` logger description if package is renamed.
+- `cmd/pdp-server/main.go` logger table: rename `input` logger description if package is renamed.

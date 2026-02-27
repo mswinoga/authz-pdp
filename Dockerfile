@@ -1,9 +1,9 @@
-FROM gcr.io/distroless/static-debian12
+ARG BASE_IMAGE=busybox:latest
+FROM ${BASE_IMAGE}
 
-COPY bin/pdp /pdp
-RUN chown 1000:1000 /pdp
+COPY --chown=1000:1000 bin/pdp-server /pdp-server
 USER 1000
 
 EXPOSE 9191
 
-ENTRYPOINT ["/pdp"]
+ENTRYPOINT ["/pdp-server"]

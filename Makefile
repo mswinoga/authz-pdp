@@ -1,6 +1,7 @@
 GOPATH  := $(shell go env GOPATH)
-BINARY  := bin/pdp
-IMAGE   := authz-pdp
+BINARY     := bin/pdp-server
+IMAGE      := authz-pdp
+BASE_IMAGE ?= busybox:latest
 GOARCH  ?= amd64
 
 # Detect protobuf include path: brew-managed on macOS, /usr/include on Linux.
@@ -25,7 +26,7 @@ build: $(BINARY)
 
 $(BINARY):
 	mkdir -p bin
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go build -o $(BINARY) ./cmd/pdp
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go build -o $(BINARY) ./cmd/pdp-server
 
 test:
 	go test ./...
@@ -34,7 +35,7 @@ lint:
 	go vet ./...
 
 docker: $(BINARY)
-	docker build -t $(IMAGE) .
+	docker build --build-arg BASE_IMAGE=$(BASE_IMAGE) -t $(IMAGE) .
 
 clean:
 	rm -rf bin
