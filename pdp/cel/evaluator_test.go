@@ -103,7 +103,7 @@ rules:
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _ := ev.Evaluate(tc.ctx)
+			got, _ := ev.Evaluate(tc.ctx, slog.Default())
 			if got != tc.wantAllow {
 				t.Errorf("Evaluate() = %v, want %v", got, tc.wantAllow)
 			}
@@ -128,7 +128,7 @@ rules:
 		Resource:  "/",
 		Action:    "GET",
 	}
-	if got, _ := ev.Evaluate(ctx); got {
+	if got, _ := ev.Evaluate(ctx, slog.Default()); got {
 		t.Error("expected deny on CEL error from unguarded null access")
 	}
 }
@@ -149,7 +149,7 @@ rules:
 		Resource:  "/",
 		Action:    "GET",
 	}
-	if got, _ := ev.Evaluate(ctx); got {
+	if got, _ := ev.Evaluate(ctx, slog.Default()); got {
 		t.Error("expected deny when no rule matches")
 	}
 }
@@ -173,7 +173,7 @@ rules:
 		Resource:  "/",
 		Action:    "GET",
 	}
-	if got, _ := ev.Evaluate(ctx); got {
+	if got, _ := ev.Evaluate(ctx, slog.Default()); got {
 		t.Error("expected deny: error in first rule must stop evaluation")
 	}
 }
@@ -193,10 +193,10 @@ rules:
 	withURI := &pdppb.Peer{Cn: "svc", Uri: "spiffe://prod/svc"}
 	withoutURI := &pdppb.Peer{Cn: "svc", Uri: ""}
 
-	if got, _ := ev.Evaluate(EvalContext{Peer: withURI, Jwt: someJWT, Operation: emptyOp, Resource: "/", Action: "GET"}); !got {
+	if got, _ := ev.Evaluate(EvalContext{Peer: withURI, Jwt: someJWT, Operation: emptyOp, Resource: "/", Action: "GET"}, slog.Default()); !got {
 		t.Error("expected allow when peer has URI")
 	}
-	if got, _ := ev.Evaluate(EvalContext{Peer: withoutURI, Jwt: someJWT, Operation: emptyOp, Resource: "/", Action: "GET"}); got {
+	if got, _ := ev.Evaluate(EvalContext{Peer: withoutURI, Jwt: someJWT, Operation: emptyOp, Resource: "/", Action: "GET"}, slog.Default()); got {
 		t.Error("expected deny when peer has no URI")
 	}
 }

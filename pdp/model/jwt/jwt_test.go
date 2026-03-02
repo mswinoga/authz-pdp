@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"log/slog"
 	"testing"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -74,7 +75,7 @@ func TestExtract(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Extract(tc.req, testKey)
+			got := Extract(tc.req, testKey, slog.Default())
 			if tc.wantNil {
 				if got != nil {
 					t.Errorf("expected nil, got %+v", got)

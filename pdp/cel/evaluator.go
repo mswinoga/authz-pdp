@@ -76,14 +76,14 @@ func NewEvaluator(p *policy.Policy, logger *slog.Logger) (*Evaluator, error) {
 //   - CEL evaluation error in any rule → immediate deny, stop
 //   - Rule result is not bool → immediate deny, stop
 //   - No rule matches → deny
-func (e *Evaluator) Evaluate(ctx EvalContext) (allow bool, matchedRule string) {
+func (e *Evaluator) Evaluate(ctx EvalContext, log *slog.Logger) (allow bool, matchedRule string) {
 	activation := buildActivation(ctx)
 
 	for _, rule := range e.rules {
 		val, _, err := rule.program.Eval(activation)
 		if err != nil {
 			// Evaluation error: fail closed.
-			e.logger.Warn("CEL eval error", "rule", rule.id, "error", err)
+			log.Warn("CEL eval error", "rule", rule.id, "error", err)
 			return false, ""
 		}
 
@@ -94,11 +94,11 @@ func (e *Evaluator) Evaluate(ctx EvalContext) (allow bool, matchedRule string) {
 		}
 
 		if bool(b) {
-			e.logger.Debug("rule matched", "id", rule.id, "decision", rule.decision)
+			log.Debug("rule matched", "id", rule.id, "decision", rule.decision)
 			return rule.decision == "allow", rule.id
 		}
 		// false: rule did not match, continue to next rule.
-		e.logger.Debug("rule", "id", rule.id, "result", bool(b))
+		log.Debug("rule", "id", rule.id, "result", bool(b))
 	}
 
 	// No rule matched: default deny.

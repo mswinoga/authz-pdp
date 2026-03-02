@@ -11,32 +11,27 @@ import (
 	pdppb "github.com/marcin/authz-pdp/pdp/gen/pdp"
 )
 
-var logger = slog.Default()
-
-// SetLogger replaces the package logger. Call once at startup before serving requests.
-func SetLogger(l *slog.Logger) { logger = l }
-
 var auidPattern = regexp.MustCompile(`^a[p0-9][0-9]{5}$`)
 
 // Parse extracts a Peer from the peer certificate field of an ext_authz
 // CheckRequest. The input is the URL-encoded DER or PEM certificate string
 // set by Envoy in req.Attributes.Source.Certificate.
 // Returns nil if the input is empty or cannot be parsed.
-func Parse(certStr string) *pdppb.Peer {
+func Parse(certStr string, log *slog.Logger) *pdppb.Peer {
 	if certStr == "" {
-		logger.Debug("no peer certificate — mTLS not configured or client did not present a cert")
+		log.Debug("no peer certificate — mTLS not configured or client did not present a cert")
 		return nil
 	}
 
 	decoded, err := url.PathUnescape(certStr)
 	if err != nil {
-		logger.Warn("peer parse failed", "reason", "url unescape: "+err.Error())
+		log.Warn("peer parse failed", "reason", "url unescape: "+err.Error())
 		return nil
 	}
 
 	cert := parseCert([]byte(decoded))
 	if cert == nil {
-		logger.Warn("peer parse failed", "reason", "cert parse failed")
+		log.Warn("peer parse failed", "reason", "cert parse failed")
 		return nil
 	}
 
@@ -48,7 +43,7 @@ func Parse(certStr string) *pdppb.Peer {
 		Idn:  dnString(cert.Issuer.ToRDNSequence()),
 		Uri:  extractURISAN(cert),
 	}
-	logger.Debug("peer extracted", "cn", peer.Cn, "auid", peer.Auid, "uri", peer.Uri)
+	log.Debug("peer extracted", "cn", peer.Cn, "auid", peer.Auid, "uri", peer.Uri)
 	return peer
 }
 

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -37,6 +39,8 @@ type server struct {
 	evaluator      *cel.Evaluator
 	jwtMetadataKey string
 	logger         *slog.Logger
+	inputLogger    *slog.Logger
+	celLogger      *slog.Logger
 }
 
 func main() {
@@ -75,9 +79,6 @@ func main() {
 		"log-level", *logLevelFlag,
 	)
 
-	jwtpkg.SetLogger(loggers["input"])
-	operationpkg.SetLogger(loggers["input"])
-	peerpkg.SetLogger(loggers["input"])
 
 	p, err := policy.LoadFile(*policyFile, loggers["policy"])
 	if err != nil {
@@ -102,6 +103,8 @@ func main() {
 		evaluator:      ev,
 		jwtMetadataKey: *jwtMetadataKey,
 		logger:         serverLog,
+		inputLogger:    loggers["input"],
+		celLogger:      loggers["cel"],
 	})
 
 	serverLog.Info("listening", "addr", lis.Addr().String())
@@ -124,12 +127,22 @@ func (s *server) Check(
 	ctx context.Context,
 	req *envoy_auth.CheckRequest,
 ) (*envoy_auth.CheckResponse, error) {
+	reqID := req.GetAttributes().GetRequest().GetHttp().GetHeaders()["x-request-id"]
+	if reqID == "" {
+		var b [8]byte
+		_, _ = crand.Read(b[:])
+		reqID = hex.EncodeToString(b[:])
+	}
+	inputLog := s.inputLogger.With("req_id", reqID)
+	celLog := s.celLogger.With("req_id", reqID)
+	reqLog := s.logger.With("req_id", reqID)
+
 	resource := req.GetAttributes().GetRequest().GetHttp().GetPath()
 	action := req.GetAttributes().GetRequest().GetHttp().GetMethod()
 
-	peer := peerpkg.Parse(req.GetAttributes().GetSource().GetCertificate())
-	jwt := jwtpkg.Extract(req, s.jwtMetadataKey)
-	operation := operationpkg.Extract(req)
+	peer := peerpkg.Parse(req.GetAttributes().GetSource().GetCertificate(), inputLog)
+	jwt := jwtpkg.Extract(req, s.jwtMetadataKey, inputLog)
+	operation := operationpkg.Extract(req, inputLog)
 
 	allow, ruleID := s.evaluator.Evaluate(cel.EvalContext{
 		Peer:      peer,
@@ -137,14 +150,13 @@ func (s *server) Check(
 		Operation: operation,
 		Resource:  resource,
 		Action:    action,
-	})
+	}, celLog)
 
 	peerCN := ""
 	if peer != nil {
 		peerCN = peer.Cn
 	}
-	s.logger.Info("decision",
-		"operation.id", operation.Id,
+	reqLog.Info("decision",
 		"peer_cn", peerCN,
 		"resource", resource,
 		"action", action,

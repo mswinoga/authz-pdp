@@ -1,6 +1,7 @@
 package operation
 
 import (
+	"log/slog"
 	"testing"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -73,7 +74,7 @@ func TestExtract(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Extract(tc.req)
+			got := Extract(tc.req, slog.Default())
 			if got == nil {
 				t.Fatal("Extract must never return nil")
 			}

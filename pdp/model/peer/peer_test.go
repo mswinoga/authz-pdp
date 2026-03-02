@@ -3,6 +3,7 @@ package peer
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"log/slog"
 	"net/url"
 	"os"
 	"testing"
@@ -90,7 +91,7 @@ func TestParse(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Parse(tc.input())
+			got := Parse(tc.input(), slog.Default())
 			if tc.wantNil {
 				if got != nil {
 					t.Errorf("expected nil, got %+v", got)
@@ -137,7 +138,7 @@ func TestExtractAUID(t *testing.T) {
 }
 
 func TestParseDNFields(t *testing.T) {
-	peer := Parse(urlEncodePEM(t, "testdata/full.pem"))
+	peer := Parse(urlEncodePEM(t, "testdata/full.pem"), slog.Default())
 	if peer == nil {
 		t.Fatal("expected non-nil peer")
 	}
@@ -151,7 +152,7 @@ func TestParseDNFields(t *testing.T) {
 
 func TestParseURLDecodeError(t *testing.T) {
 	// A string with an invalid percent-encoding sequence.
-	got := Parse("%GG")
+	got := Parse("%GG", slog.Default())
 	if got != nil {
 		t.Errorf("expected nil for invalid URL encoding, got %+v", got)
 	}
