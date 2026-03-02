@@ -20,9 +20,6 @@ import (
 // without error. any_peer guards against peer == null similarly.
 func pdpMacros() []cel.Macro {
 	return []cel.Macro{
-		// scope("s") — jwt carries this single scope
-		cel.GlobalMacro("scope", 1, scopeMacro),
-
 		// any_scope("s1", "s2", ...) — jwt carries at least one of the listed scopes
 		cel.GlobalVarArgMacro("any_scope", anyScopeMacro),
 
@@ -35,17 +32,12 @@ func pdpMacros() []cel.Macro {
 		// any_operation("op1", "op2", ...) — operation.id matches one of the listed values
 		cel.GlobalVarArgMacro("any_operation", anyOperationMacro),
 
-		// any_path("/prefix1", "/prefix2", ...) — operation.path starts with one of the listed prefixes
+		// any_path("/prefix1", "/prefix2", ...) — resource starts with one of the listed prefixes
 		cel.GlobalVarArgMacro("any_path", anyPathMacro),
 
-		// any_verb("GET", "POST", ...) — operation.method matches one of the listed HTTP verbs
+		// any_verb("GET", "POST", ...) — action matches one of the listed HTTP verbs
 		cel.GlobalVarArgMacro("any_verb", anyVerbMacro),
 	}
-}
-
-// scope("s") → jwt != null && "s" in jwt["scopes"]
-func scopeMacro(eh cel.MacroExprFactory, _ ast.Expr, args []ast.Expr) (ast.Expr, *common.Error) {
-	return jwtHasScope(eh, args[0]), nil
 }
 
 // any_scope("s1", ...) → jwt != null && ["s1",...].exists(__s__, __s__ in jwt["scopes"])
@@ -77,11 +69,12 @@ func allScopesMacro(eh cel.MacroExprFactory, _ ast.Expr, args []ast.Expr) (ast.E
 // any_peer("p1", ...) → peer != null && peer.cn in ["p1",...]
 func anyPeerMacro(eh cel.MacroExprFactory, _ ast.Expr, args []ast.Expr) (ast.Expr, *common.Error) {
 	if len(args) == 0 {
-		return peerNotNull(eh), nil
+		return eh.NewLiteral(types.False), nil
 	}
+	peerNotNull := eh.NewCall(operators.NotEquals, eh.NewIdent("peer"), eh.NewLiteral(types.NullValue))
 	peerCN := eh.NewSelect(eh.NewIdent("peer"), "cn")
 	return eh.NewCall(operators.LogicalAnd,
-		peerNotNull(eh),
+		peerNotNull,
 		eh.NewCall(operators.In, peerCN, eh.NewList(args...)),
 	), nil
 }
@@ -116,10 +109,6 @@ func anyVerbMacro(eh cel.MacroExprFactory, _ ast.Expr, args []ast.Expr) (ast.Exp
 
 func jwtNotNull(eh cel.MacroExprFactory) ast.Expr {
 	return eh.NewCall(operators.NotEquals, eh.NewIdent("jwt"), eh.NewLiteral(types.NullValue))
-}
-
-func peerNotNull(eh cel.MacroExprFactory) ast.Expr {
-	return eh.NewCall(operators.NotEquals, eh.NewIdent("peer"), eh.NewLiteral(types.NullValue))
 }
 
 func jwtScopes(eh cel.MacroExprFactory) ast.Expr {

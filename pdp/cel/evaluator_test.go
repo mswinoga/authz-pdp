@@ -196,79 +196,88 @@ rules:
 
 // --- macro tests ------------------------------------------------------------
 
-func TestMacroScope(t *testing.T) {
-	const p = `
-version: 1
-rules:
-  - id: allow-billing
-    allow: scope("billing")
-  - id: deny-all
-    deny: "true"
-`
-	ev := newEvaluator(t, p)
-
-	billingJWT := makeJWT(map[string]any{"scopes": []any{"billing", "read"}})
-	readOnlyJWT := makeJWT(map[string]any{"scopes": []any{"read"}})
-
-	if got, _ := ev.Evaluate(ctx(somePeer, billingJWT, emptyOp, "/", "GET"), slog.Default()); !got {
-		t.Error("expected allow: jwt has billing scope")
-	}
-	if got, _ := ev.Evaluate(ctx(somePeer, readOnlyJWT, emptyOp, "/", "GET"), slog.Default()); got {
-		t.Error("expected deny: jwt missing billing scope")
-	}
-	if got, _ := ev.Evaluate(ctx(somePeer, nil, emptyOp, "/", "GET"), slog.Default()); got {
-		t.Error("expected deny: null jwt must not error")
-	}
-}
 
 func TestMacroAnyScope(t *testing.T) {
-	const p = `
+	evMulti := newEvaluator(t, `
 version: 1
 rules:
   - id: allow-any
-    allow: any_scope("admin", "billing")
+    allow: any_scope("adm", "billing")
   - id: deny-all
     deny: "true"
-`
-	ev := newEvaluator(t, p)
+`)
+	evSingle := newEvaluator(t, `
+version: 1
+rules:
+  - id: allow-single
+    allow: any_scope("adm")
+  - id: deny-all
+    deny: "true"
+`)
 
-	adminJWT := makeJWT(map[string]any{"scopes": []any{"admin"}})
+	admJWT := makeJWT(map[string]any{"scopes": []any{"adm"}})
 	billingJWT := makeJWT(map[string]any{"scopes": []any{"billing"}})
 	noneJWT := makeJWT(map[string]any{"scopes": []any{"read"}})
 
-	if got, _ := ev.Evaluate(ctx(somePeer, adminJWT, emptyOp, "/", "GET"), slog.Default()); !got {
-		t.Error("expected allow: jwt has admin scope")
+	// multi-arg: any match
+	if got, _ := evMulti.Evaluate(ctx(somePeer, admJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+		t.Error("expected allow: jwt has adm scope")
 	}
-	if got, _ := ev.Evaluate(ctx(somePeer, billingJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+	if got, _ := evMulti.Evaluate(ctx(somePeer, billingJWT, emptyOp, "/", "GET"), slog.Default()); !got {
 		t.Error("expected allow: jwt has billing scope")
 	}
-	if got, _ := ev.Evaluate(ctx(somePeer, noneJWT, emptyOp, "/", "GET"), slog.Default()); got {
+	if got, _ := evMulti.Evaluate(ctx(somePeer, noneJWT, emptyOp, "/", "GET"), slog.Default()); got {
 		t.Error("expected deny: jwt has neither scope")
 	}
-	if got, _ := ev.Evaluate(ctx(somePeer, nil, emptyOp, "/", "GET"), slog.Default()); got {
+	if got, _ := evMulti.Evaluate(ctx(somePeer, nil, emptyOp, "/", "GET"), slog.Default()); got {
 		t.Error("expected deny: null jwt")
+	}
+
+	// single-arg fast path
+	if got, _ := evSingle.Evaluate(ctx(somePeer, admJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+		t.Error("single-arg: expected allow")
+	}
+	if got, _ := evSingle.Evaluate(ctx(somePeer, noneJWT, emptyOp, "/", "GET"), slog.Default()); got {
+		t.Error("single-arg: expected deny")
 	}
 }
 
 func TestMacroAllScopes(t *testing.T) {
-	const p = `
+	evMulti := newEvaluator(t, `
 version: 1
 rules:
   - id: allow-both
     allow: all_scopes("billing", "read")
   - id: deny-all
     deny: "true"
-`
-	ev := newEvaluator(t, p)
+`)
+	evSingle := newEvaluator(t, `
+version: 1
+rules:
+  - id: allow-single
+    allow: all_scopes("billing")
+  - id: deny-all
+    deny: "true"
+`)
 
 	bothJWT := makeJWT(map[string]any{"scopes": []any{"billing", "read", "extra"}})
 	oneJWT := makeJWT(map[string]any{"scopes": []any{"billing"}})
+	noneJWT := makeJWT(map[string]any{"scopes": []any{"other"}})
 
-	if got, _ := ev.Evaluate(ctx(somePeer, bothJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+	// multi-arg: all must match
+	if got, _ := evMulti.Evaluate(ctx(somePeer, bothJWT, emptyOp, "/", "GET"), slog.Default()); !got {
 		t.Error("expected allow: jwt has both scopes")
 	}
-	if got, _ := ev.Evaluate(ctx(somePeer, oneJWT, emptyOp, "/", "GET"), slog.Default()); got {
+	if got, _ := evMulti.Evaluate(ctx(somePeer, oneJWT, emptyOp, "/", "GET"), slog.Default()); got {
 		t.Error("expected deny: jwt missing read scope")
+	}
+
+	// single-arg fast path
+	if got, _ := evSingle.Evaluate(ctx(somePeer, oneJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+		t.Error("single-arg: expected allow")
+	}
+	if got, _ := evSingle.Evaluate(ctx(somePeer, noneJWT, emptyOp, "/", "GET"), slog.Default()); got {
+		t.Error("single-arg: expected deny")
 	}
 }
 
@@ -385,7 +394,7 @@ rules:
     allow: any_peer("svc-a") &&
            any_verb("GET", "HEAD") &&
            any_path("/v1/orders") &&
-           scope("orders:read")
+           any_scope("orders:read")
   - id: deny-all
     deny: "true"
 `

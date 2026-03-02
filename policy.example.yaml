@@ -4,13 +4,12 @@ rules:
     deny: peer == null || jwt == null
 
   - id: allow-admin
-    allow: jwt != null && "order:admin" in jwt["scopes"]
+    allow: any_scope("order:admin")
 
   - id: allow-service-readonly
-    allow: peer != null &&
-           peer.cn == "svc-a" &&
+    allow: any_peer("svc-a") &&
            peer.auid == "ap12345" &&
-           operation.id in ["Order_Get", "Order_List"]
+           any_operation("Order_Get", "Order_List")
 
   - id: deny-all
     deny: "true"
