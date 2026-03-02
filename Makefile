@@ -1,6 +1,6 @@
 GOPATH  := $(shell go env GOPATH)
 BINARY     := bin/pdp-server
-IMAGE      := authz-pdp
+IMAGE      := authz-pdp:latest
 BASE_IMAGE ?= busybox:latest
 GOARCH  ?= amd64
 
@@ -36,6 +36,9 @@ lint:
 
 docker: $(BINARY)
 	docker build --build-arg BASE_IMAGE=$(BASE_IMAGE) -t $(IMAGE) .
+
+docker-push: docker
+	./.local/docker-push.sh $(IMAGE)
 
 clean:
 	rm -rf bin

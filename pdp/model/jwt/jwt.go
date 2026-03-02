@@ -20,7 +20,7 @@ const jwtAuthnFilterName = "envoy.filters.http.jwt_authn"
 func Extract(req *envoy_auth.CheckRequest, jwtMetadataKey string) *structpb.Struct {
 	filterMeta := req.GetAttributes().GetMetadataContext().GetFilterMetadata()
 	if filterMeta == nil {
-		logger.Debug("filter_metadata absent — check metadata_context_namespaces in ext_authz config")
+		logger.Debug("jwt: filter_metadata absent — check metadata_context_namespaces in ext_authz config")
 		return nil
 	}
 

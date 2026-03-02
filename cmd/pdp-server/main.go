@@ -144,6 +144,7 @@ func (s *server) Check(
 		peerCN = peer.Cn
 	}
 	s.logger.Info("decision",
+		"operation.id", operation.Id,
 		"peer_cn", peerCN,
 		"resource", resource,
 		"action", action,

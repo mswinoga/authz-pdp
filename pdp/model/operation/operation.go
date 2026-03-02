@@ -25,6 +25,7 @@ func Extract(req *envoy_auth.CheckRequest) *pdppb.Operation {
 	if !ok || pdpMeta == nil {
 		logger.Debug("operation metadata absent — check route_metadata_context_namespaces in ext_authz config",
 			"namespace", pdpFilterName)
+		return &pdppb.Operation{}
 	}
 	op := &pdppb.Operation{
 		Id:      stringField(pdpMeta, "operation_id"),
