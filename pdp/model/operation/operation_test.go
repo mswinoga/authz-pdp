@@ -29,11 +29,11 @@ func makeReq(pdpFields map[string]any) *envoy_auth.CheckRequest {
 
 func TestExtract(t *testing.T) {
 	tests := []struct {
-		name          string
-		req           *envoy_auth.CheckRequest
-		wantID        string
-		wantScope     string
-		wantVersion   string
+		name        string
+		req         *envoy_auth.CheckRequest
+		wantID      string
+		wantScope   string
+		wantVersion string
 	}{
 		{
 			name:        "nil attributes",

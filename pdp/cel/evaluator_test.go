@@ -39,11 +39,15 @@ func makeJWT(claims map[string]any) *structpb.Struct {
 
 var (
 	somePeer = &pdppb.Peer{Cn: "svc-a", Auid: "ap12345", Uri: "spiffe://prod/svc-a"}
-	someJWT  = makeJWT(map[string]any{"sub": "alice", "roles": []any{"viewer"}})
-	adminJWT = makeJWT(map[string]any{"sub": "admin", "roles": []any{"order:admin"}})
+	someJWT  = makeJWT(map[string]any{"sub": "alice", "scopes": []any{"viewer"}})
+	adminJWT = makeJWT(map[string]any{"sub": "admin", "scopes": []any{"order:admin"}})
 	someOp   = &pdppb.Operation{Id: "Order_Get", Scope: "orders", Version: "v1"}
 	emptyOp  = &pdppb.Operation{}
 )
+
+func ctx(peer *pdppb.Peer, jwt *structpb.Struct, op *pdppb.Operation, resource, action string) EvalContext {
+	return EvalContext{Peer: peer, Jwt: jwt, Operation: op, Resource: resource, Action: action}
+}
 
 func TestEvaluate(t *testing.T) {
 	const basePolicy = `
@@ -52,16 +56,14 @@ rules:
   - id: deny-no-identity
     deny: peer == null || jwt == null
   - id: allow-admin
-    allow: jwt != null && "order:admin" in jwt["roles"]
+    allow: any_scope("order:admin")
   - id: allow-service-readonly
-    allow: peer != null &&
-           peer.cn == "svc-a" &&
+    allow: any_peer("svc-a") &&
            peer.auid == "ap12345" &&
-           operation.id in ["Order_Get", "Order_List"]
+           any_operation("Order_Get", "Order_List")
   - id: deny-all
     deny: "true"
 `
-
 	ev := newEvaluator(t, basePolicy)
 
 	tests := []struct {
@@ -71,32 +73,32 @@ rules:
 	}{
 		{
 			name:      "null peer → deny via deny-no-identity",
-			ctx:       EvalContext{Peer: nil, Jwt: someJWT, Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       ctx(nil, someJWT, someOp, "/v1/orders", "GET"),
 			wantAllow: false,
 		},
 		{
 			name:      "null jwt → deny via deny-no-identity",
-			ctx:       EvalContext{Peer: somePeer, Jwt: nil, Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       ctx(somePeer, nil, someOp, "/v1/orders", "GET"),
 			wantAllow: false,
 		},
 		{
 			name:      "admin JWT → allow via allow-admin",
-			ctx:       EvalContext{Peer: somePeer, Jwt: adminJWT, Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       ctx(somePeer, adminJWT, someOp, "/v1/orders", "GET"),
 			wantAllow: true,
 		},
 		{
 			name:      "matching service + operation → allow",
-			ctx:       EvalContext{Peer: somePeer, Jwt: someJWT, Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       ctx(somePeer, someJWT, someOp, "/v1/orders", "GET"),
 			wantAllow: true,
 		},
 		{
 			name:      "wrong operation id → deny via deny-all",
-			ctx:       EvalContext{Peer: somePeer, Jwt: someJWT, Operation: &pdppb.Operation{Id: "Order_Delete"}, Resource: "/orders", Action: "DELETE"},
+			ctx:       ctx(somePeer, someJWT, &pdppb.Operation{Id: "Order_Delete"}, "/v1/orders/1", "DELETE"),
 			wantAllow: false,
 		},
 		{
 			name:      "wrong CN → deny via deny-all",
-			ctx:       EvalContext{Peer: &pdppb.Peer{Cn: "svc-b", Auid: "ap12345"}, Jwt: someJWT, Operation: someOp, Resource: "/orders", Action: "GET"},
+			ctx:       ctx(&pdppb.Peer{Cn: "svc-b", Auid: "ap12345"}, someJWT, someOp, "/v1/orders", "GET"),
 			wantAllow: false,
 		},
 	}
@@ -112,8 +114,6 @@ rules:
 }
 
 func TestEvaluateNullGuardError(t *testing.T) {
-	// A rule that accesses peer.cn without a null guard — when peer is nil,
-	// this produces a CEL runtime error → immediate deny.
 	const p = `
 version: 1
 rules:
@@ -121,42 +121,25 @@ rules:
     allow: peer.cn == "svc-a"
 `
 	ev := newEvaluator(t, p)
-	ctx := EvalContext{
-		Peer:      nil, // null peer
-		Jwt:       someJWT,
-		Operation: emptyOp,
-		Resource:  "/",
-		Action:    "GET",
-	}
-	if got, _ := ev.Evaluate(ctx, slog.Default()); got {
+	if got, _ := ev.Evaluate(ctx(nil, someJWT, emptyOp, "/", "GET"), slog.Default()); got {
 		t.Error("expected deny on CEL error from unguarded null access")
 	}
 }
 
 func TestEvaluateNoMatch(t *testing.T) {
-	// A policy where no rule matches → default deny.
 	const p = `
 version: 1
 rules:
   - id: allow-only-post
-    allow: action == "POST"
+    allow: any_verb("POST")
 `
 	ev := newEvaluator(t, p)
-	ctx := EvalContext{
-		Peer:      somePeer,
-		Jwt:       someJWT,
-		Operation: emptyOp,
-		Resource:  "/",
-		Action:    "GET",
-	}
-	if got, _ := ev.Evaluate(ctx, slog.Default()); got {
+	if got, _ := ev.Evaluate(ctx(somePeer, someJWT, emptyOp, "/", "GET"), slog.Default()); got {
 		t.Error("expected deny when no rule matches")
 	}
 }
 
 func TestEvaluateErrorStopsEvaluation(t *testing.T) {
-	// Rule 1 errors (unguarded null access), rule 2 would allow.
-	// Error in rule 1 must deny immediately — rule 2 must not be reached.
 	const p = `
 version: 1
 rules:
@@ -166,20 +149,12 @@ rules:
     allow: "true"
 `
 	ev := newEvaluator(t, p)
-	ctx := EvalContext{
-		Peer:      nil, // causes error in rule 1
-		Jwt:       someJWT,
-		Operation: emptyOp,
-		Resource:  "/",
-		Action:    "GET",
-	}
-	if got, _ := ev.Evaluate(ctx, slog.Default()); got {
+	if got, _ := ev.Evaluate(ctx(nil, someJWT, emptyOp, "/", "GET"), slog.Default()); got {
 		t.Error("expected deny: error in first rule must stop evaluation")
 	}
 }
 
 func TestEvaluateHasMacro(t *testing.T) {
-	// has() on a proto field returns true iff the value is non-zero.
 	const p = `
 version: 1
 rules:
@@ -193,10 +168,10 @@ rules:
 	withURI := &pdppb.Peer{Cn: "svc", Uri: "spiffe://prod/svc"}
 	withoutURI := &pdppb.Peer{Cn: "svc", Uri: ""}
 
-	if got, _ := ev.Evaluate(EvalContext{Peer: withURI, Jwt: someJWT, Operation: emptyOp, Resource: "/", Action: "GET"}, slog.Default()); !got {
+	if got, _ := ev.Evaluate(ctx(withURI, someJWT, emptyOp, "/", "GET"), slog.Default()); !got {
 		t.Error("expected allow when peer has URI")
 	}
-	if got, _ := ev.Evaluate(EvalContext{Peer: withoutURI, Jwt: someJWT, Operation: emptyOp, Resource: "/", Action: "GET"}, slog.Default()); got {
+	if got, _ := ev.Evaluate(ctx(withoutURI, someJWT, emptyOp, "/", "GET"), slog.Default()); got {
 		t.Error("expected deny when peer has no URI")
 	}
 }
@@ -216,5 +191,226 @@ rules:
 	_, err = NewEvaluator(p, slog.Default())
 	if err == nil {
 		t.Error("expected compile error for unknown field, got nil")
+	}
+}
+
+// --- macro tests ------------------------------------------------------------
+
+func TestMacroScope(t *testing.T) {
+	const p = `
+version: 1
+rules:
+  - id: allow-billing
+    allow: scope("billing")
+  - id: deny-all
+    deny: "true"
+`
+	ev := newEvaluator(t, p)
+
+	billingJWT := makeJWT(map[string]any{"scopes": []any{"billing", "read"}})
+	readOnlyJWT := makeJWT(map[string]any{"scopes": []any{"read"}})
+
+	if got, _ := ev.Evaluate(ctx(somePeer, billingJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+		t.Error("expected allow: jwt has billing scope")
+	}
+	if got, _ := ev.Evaluate(ctx(somePeer, readOnlyJWT, emptyOp, "/", "GET"), slog.Default()); got {
+		t.Error("expected deny: jwt missing billing scope")
+	}
+	if got, _ := ev.Evaluate(ctx(somePeer, nil, emptyOp, "/", "GET"), slog.Default()); got {
+		t.Error("expected deny: null jwt must not error")
+	}
+}
+
+func TestMacroAnyScope(t *testing.T) {
+	const p = `
+version: 1
+rules:
+  - id: allow-any
+    allow: any_scope("admin", "billing")
+  - id: deny-all
+    deny: "true"
+`
+	ev := newEvaluator(t, p)
+
+	adminJWT := makeJWT(map[string]any{"scopes": []any{"admin"}})
+	billingJWT := makeJWT(map[string]any{"scopes": []any{"billing"}})
+	noneJWT := makeJWT(map[string]any{"scopes": []any{"read"}})
+
+	if got, _ := ev.Evaluate(ctx(somePeer, adminJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+		t.Error("expected allow: jwt has admin scope")
+	}
+	if got, _ := ev.Evaluate(ctx(somePeer, billingJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+		t.Error("expected allow: jwt has billing scope")
+	}
+	if got, _ := ev.Evaluate(ctx(somePeer, noneJWT, emptyOp, "/", "GET"), slog.Default()); got {
+		t.Error("expected deny: jwt has neither scope")
+	}
+	if got, _ := ev.Evaluate(ctx(somePeer, nil, emptyOp, "/", "GET"), slog.Default()); got {
+		t.Error("expected deny: null jwt")
+	}
+}
+
+func TestMacroAllScopes(t *testing.T) {
+	const p = `
+version: 1
+rules:
+  - id: allow-both
+    allow: all_scopes("billing", "read")
+  - id: deny-all
+    deny: "true"
+`
+	ev := newEvaluator(t, p)
+
+	bothJWT := makeJWT(map[string]any{"scopes": []any{"billing", "read", "extra"}})
+	oneJWT := makeJWT(map[string]any{"scopes": []any{"billing"}})
+
+	if got, _ := ev.Evaluate(ctx(somePeer, bothJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+		t.Error("expected allow: jwt has both scopes")
+	}
+	if got, _ := ev.Evaluate(ctx(somePeer, oneJWT, emptyOp, "/", "GET"), slog.Default()); got {
+		t.Error("expected deny: jwt missing read scope")
+	}
+}
+
+func TestMacroAnyPeer(t *testing.T) {
+	const p = `
+version: 1
+rules:
+  - id: allow-known-services
+    allow: any_peer("svc-a", "svc-b")
+  - id: deny-all
+    deny: "true"
+`
+	ev := newEvaluator(t, p)
+
+	peerA := &pdppb.Peer{Cn: "svc-a"}
+	peerB := &pdppb.Peer{Cn: "svc-b"}
+	peerC := &pdppb.Peer{Cn: "svc-c"}
+
+	if got, _ := ev.Evaluate(ctx(peerA, someJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+		t.Error("expected allow: svc-a in list")
+	}
+	if got, _ := ev.Evaluate(ctx(peerB, someJWT, emptyOp, "/", "GET"), slog.Default()); !got {
+		t.Error("expected allow: svc-b in list")
+	}
+	if got, _ := ev.Evaluate(ctx(peerC, someJWT, emptyOp, "/", "GET"), slog.Default()); got {
+		t.Error("expected deny: svc-c not in list")
+	}
+	if got, _ := ev.Evaluate(ctx(nil, someJWT, emptyOp, "/", "GET"), slog.Default()); got {
+		t.Error("expected deny: null peer")
+	}
+}
+
+func TestMacroAnyOperation(t *testing.T) {
+	const p = `
+version: 1
+rules:
+  - id: allow-reads
+    allow: any_operation("Order_Get", "Order_List")
+  - id: deny-all
+    deny: "true"
+`
+	ev := newEvaluator(t, p)
+
+	if got, _ := ev.Evaluate(ctx(somePeer, someJWT, &pdppb.Operation{Id: "Order_Get"}, "/", "GET"), slog.Default()); !got {
+		t.Error("expected allow: Order_Get in list")
+	}
+	if got, _ := ev.Evaluate(ctx(somePeer, someJWT, &pdppb.Operation{Id: "Order_Delete"}, "/", "DELETE"), slog.Default()); got {
+		t.Error("expected deny: Order_Delete not in list")
+	}
+}
+
+func TestMacroAnyPath(t *testing.T) {
+	const p = `
+version: 1
+rules:
+  - id: allow-orders-prefix
+    allow: any_path("/v1/orders", "/v1/cart")
+  - id: deny-all
+    deny: "true"
+`
+	ev := newEvaluator(t, p)
+
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/v1/orders", true},
+		{"/v1/orders/123", true},
+		{"/v1/orders/123/items", true},
+		{"/v1/cart", true},
+		{"/v1/cart/abc", true},
+		{"/v1/users", false},
+		{"/v2/orders", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		got, _ := ev.Evaluate(ctx(somePeer, someJWT, emptyOp, tc.path, "GET"), slog.Default())
+		if got != tc.want {
+			t.Errorf("path %q: got %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestMacroAnyVerb(t *testing.T) {
+	const p = `
+version: 1
+rules:
+  - id: allow-reads
+    allow: any_verb("GET", "HEAD")
+  - id: deny-all
+    deny: "true"
+`
+	ev := newEvaluator(t, p)
+
+	for _, verb := range []string{"GET", "HEAD"} {
+		if got, _ := ev.Evaluate(ctx(somePeer, someJWT, emptyOp, "/", verb), slog.Default()); !got {
+			t.Errorf("expected allow for verb %s", verb)
+		}
+	}
+	for _, verb := range []string{"POST", "DELETE", "PATCH"} {
+		if got, _ := ev.Evaluate(ctx(somePeer, someJWT, emptyOp, "/", verb), slog.Default()); got {
+			t.Errorf("expected deny for verb %s", verb)
+		}
+	}
+}
+
+func TestMacroComposition(t *testing.T) {
+	const p = `
+version: 1
+rules:
+  - id: deny-no-identity
+    deny: peer == null || jwt == null
+  - id: allow-svc-a-orders-read
+    allow: any_peer("svc-a") &&
+           any_verb("GET", "HEAD") &&
+           any_path("/v1/orders") &&
+           scope("orders:read")
+  - id: deny-all
+    deny: "true"
+`
+	ev := newEvaluator(t, p)
+
+	ordersReadJWT := makeJWT(map[string]any{"scopes": []any{"orders:read"}})
+	noScopeJWT := makeJWT(map[string]any{"scopes": []any{"other"}})
+	peerA := &pdppb.Peer{Cn: "svc-a"}
+	peerB := &pdppb.Peer{Cn: "svc-b"}
+
+	cases := []struct {
+		name string
+		ctx  EvalContext
+		want bool
+	}{
+		{"allow: all match", ctx(peerA, ordersReadJWT, emptyOp, "/v1/orders/1", "GET"), true},
+		{"deny: wrong peer", ctx(peerB, ordersReadJWT, emptyOp, "/v1/orders/1", "GET"), false},
+		{"deny: wrong verb", ctx(peerA, ordersReadJWT, emptyOp, "/v1/orders/1", "POST"), false},
+		{"deny: wrong path", ctx(peerA, ordersReadJWT, emptyOp, "/v1/users/1", "GET"), false},
+		{"deny: missing scope", ctx(peerA, noScopeJWT, emptyOp, "/v1/orders/1", "GET"), false},
+	}
+	for _, tc := range cases {
+		got, _ := ev.Evaluate(tc.ctx, slog.Default())
+		if got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

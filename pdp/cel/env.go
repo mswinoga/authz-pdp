@@ -5,8 +5,8 @@ import (
 	pdppb "github.com/marcin/authz-pdp/pdp/gen/pdp"
 )
 
-// buildEnv constructs the shared CEL environment with proto types registered
-// and all input variables declared. Called once at startup.
+// buildEnv constructs the shared CEL environment with proto types registered,
+// all input variables declared, and PDP macros registered. Called once at startup.
 func buildEnv() (*cel.Env, error) {
 	return cel.NewEnv(
 		// Register proto message descriptors so field names are validated
@@ -27,8 +27,14 @@ func buildEnv() (*cel.Env, error) {
 		// operation is never null; all string fields are "" when not configured.
 		cel.Variable("operation", cel.ObjectType("pdp.Operation")),
 
-		// resource and action are always present HTTP request attributes.
+		// resource and action are the raw HTTP request path and method.
+		// Policy files should use any_path() and any_verb() rather than
+		// referencing these variables directly.
 		cel.Variable("resource", cel.StringType),
 		cel.Variable("action", cel.StringType),
+
+		// PDP macros: stable policy interface decoupled from the input model.
+		// Policy files should use macros rather than referencing jwt/peer/operation directly.
+		cel.Macros(pdpMacros()...),
 	)
 }

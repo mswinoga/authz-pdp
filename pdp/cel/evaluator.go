@@ -13,11 +13,11 @@ import (
 
 // EvalContext holds the per-request input variables passed to CEL.
 type EvalContext struct {
-	Peer      *pdppb.Peer       // nil when no peer cert or cert parse failure
-	Jwt       *structpb.Struct  // nil when jwt_authn metadata absent
-	Operation *pdppb.Operation  // never nil; fields may be ""
-	Resource  string
-	Action    string
+	Peer      *pdppb.Peer      // nil when no peer cert or cert parse failure
+	Jwt       *structpb.Struct // nil when jwt_authn metadata absent
+	Operation *pdppb.Operation // never nil; fields are "" when not configured
+	Resource  string           // HTTP request path
+	Action    string           // HTTP request method
 }
 
 // compiledRule pairs a compiled CEL program with its policy decision.
