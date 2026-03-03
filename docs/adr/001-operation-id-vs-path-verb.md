@@ -85,9 +85,9 @@ block under the `pdp` key:
 metadata:
   filter_metadata:
     pdp:
-      operation: "GetOrder"   # OpenAPI operationId
-      scope: "orders"         # api name/id - grouping
-      version: "v1"           # optional
+      operation_id: "GetOrder"  # OpenAPI operationId
+      api: "orders"             # API definition name — groups operations
+      version: "v1"             # API definition version
 ```
 
 This is a one-time cost per endpoint. If Envoy config is generated (from OpenAPI,

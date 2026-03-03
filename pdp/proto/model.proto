@@ -15,6 +15,6 @@ message Peer {
 
 message Operation {
   string id      = 1; // from operation_id key in filter_metadata.pdp; "" if absent
-  string scope   = 2;
-  string version = 3;
+  string api     = 2; // API definition name; "" if absent
+  string version = 3; // API definition version; "" if absent
 }

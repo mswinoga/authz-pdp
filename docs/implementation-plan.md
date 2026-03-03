@@ -92,8 +92,8 @@ message Peer {
 
 message Operation {
   string id      = 1;  // from operation_id key in filter_metadata.pdp; "" if absent
-  string scope   = 2;
-  string version = 3;
+  string api     = 2;  // API definition name; "" if absent
+  string version = 3;  // API definition version; "" if absent
 }
 ```
 
@@ -177,9 +177,9 @@ func Extract(req *envoy_auth.CheckRequest) *pdppb.Operation
 
 Steps:
 1. Navigate: `req.Attributes.MetadataContext.FilterMetadata["pdp"]` → `*structpb.Struct`.
-2. Extract string values for keys `"operation_id"`, `"scope"`, `"version"` using
+2. Extract string values for keys `"operation_id"`, `"api"`, `"version"` using
    `.Fields[key].GetStringValue()` — returns `""` for absent or non-string values.
-3. Return `&Operation{Id: ..., Scope: ..., Version: ...}`.
+3. Return `&Operation{Id: ..., Api: ..., Version: ...}`.
 
 **Tests:**
 - nil pdp metadata → all fields `""`

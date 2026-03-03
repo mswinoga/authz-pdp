@@ -23,10 +23,10 @@ func Extract(req *envoy_auth.CheckRequest, log *slog.Logger) *pdppb.Operation {
 	}
 	op := &pdppb.Operation{
 		Id:      stringField(pdpMeta, "operation_id"),
-		Scope:   stringField(pdpMeta, "scope"),
+		Api:     stringField(pdpMeta, "api"),
 		Version: stringField(pdpMeta, "version"),
 	}
-	log.Debug("operation extracted", "id", op.Id, "scope", op.Scope, "version", op.Version)
+	log.Debug("operation extracted", "id", op.Id, "api", op.Api, "version", op.Version)
 	return op
 }
 

@@ -107,9 +107,9 @@ func (x *Peer) GetUri() string {
 
 type Operation struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // from operation_id key in filter_metadata.pdp; "" if absent
-	Scope         string                 `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
-	Version       string                 `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`           // from operation_id key in filter_metadata.pdp; "" if absent
+	Api           string                 `protobuf:"bytes,2,opt,name=api,proto3" json:"api,omitempty"`         // API definition name; "" if absent
+	Version       string                 `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"` // API definition version; "" if absent
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -151,9 +151,9 @@ func (x *Operation) GetId() string {
 	return ""
 }
 
-func (x *Operation) GetScope() string {
+func (x *Operation) GetApi() string {
 	if x != nil {
-		return x.Scope
+		return x.Api
 	}
 	return ""
 }
@@ -176,10 +176,10 @@ const file_model_proto_rawDesc = "" +
 	"\x04auid\x18\x03 \x01(\tR\x04auid\x12\x10\n" +
 	"\x03icn\x18\x04 \x01(\tR\x03icn\x12\x10\n" +
 	"\x03idn\x18\x05 \x01(\tR\x03idn\x12\x10\n" +
-	"\x03uri\x18\x06 \x01(\tR\x03uri\"K\n" +
+	"\x03uri\x18\x06 \x01(\tR\x03uri\"G\n" +
 	"\tOperation\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
-	"\x05scope\x18\x02 \x01(\tR\x05scope\x12\x18\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
+	"\x03api\x18\x02 \x01(\tR\x03api\x12\x18\n" +
 	"\aversion\x18\x03 \x01(\tR\aversionB)Z'github.com/marcin/authz-pdp/pdp/gen/pdpb\x06proto3"
 
 var (

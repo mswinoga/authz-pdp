@@ -116,7 +116,7 @@ Absence is never represented as `"anonymous"`.
 
 ## 2.3 operation
 
-operation id, scope, version are derived from route metadata configured in envoy and are optional:
+operation id, api, version are derived from route metadata configured in envoy and are optional:
 
 ```yaml
 routes:
@@ -126,7 +126,7 @@ routes:
     filter_metadata:
       pdp:
         operation_id: "cart.item.list"
-        scope: "billing"
+        api: "billing"
         version: "v1"
 ```
 
@@ -134,9 +134,9 @@ operation is modelled as:
 
 ```
 operation {
-  id:      string  // maps from the `operation_id` key in filter_metadata.pdp
-  scope:   string
-  version: string
+  id:      string  // maps from the `operation_id` key in filter_metadata.pdp; "" if absent
+  api:     string  // API definition name (groups operations by API); "" if absent
+  version: string  // API definition version; "" if absent
 }
 ```
 

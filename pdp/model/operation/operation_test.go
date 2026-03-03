@@ -32,42 +32,42 @@ func TestExtract(t *testing.T) {
 		name        string
 		req         *envoy_auth.CheckRequest
 		wantID      string
-		wantScope   string
+		wantAPI     string
 		wantVersion string
 	}{
 		{
 			name:        "nil attributes",
 			req:         &envoy_auth.CheckRequest{},
 			wantID:      "",
-			wantScope:   "",
+			wantAPI:     "",
 			wantVersion: "",
 		},
 		{
 			name:        "no pdp metadata",
 			req:         makeReq(nil),
 			wantID:      "",
-			wantScope:   "",
+			wantAPI:     "",
 			wantVersion: "",
 		},
 		{
 			name:        "all fields present",
-			req:         makeReq(map[string]any{"operation_id": "GetOrder", "scope": "orders", "version": "v1"}),
+			req:         makeReq(map[string]any{"operation_id": "GetOrder", "api": "orders", "version": "v1"}),
 			wantID:      "GetOrder",
-			wantScope:   "orders",
+			wantAPI:     "orders",
 			wantVersion: "v1",
 		},
 		{
 			name:        "partial fields",
 			req:         makeReq(map[string]any{"operation_id": "ListOrders"}),
 			wantID:      "ListOrders",
-			wantScope:   "",
+			wantAPI:     "",
 			wantVersion: "",
 		},
 		{
 			name:        "non-string value for key",
 			req:         makeReq(map[string]any{"operation_id": 42.0}),
 			wantID:      "",
-			wantScope:   "",
+			wantAPI:     "",
 			wantVersion: "",
 		},
 	}
@@ -81,8 +81,8 @@ func TestExtract(t *testing.T) {
 			if got.Id != tc.wantID {
 				t.Errorf("ID: want %q, got %q", tc.wantID, got.Id)
 			}
-			if got.Scope != tc.wantScope {
-				t.Errorf("Scope: want %q, got %q", tc.wantScope, got.Scope)
+			if got.Api != tc.wantAPI {
+				t.Errorf("API: want %q, got %q", tc.wantAPI, got.Api)
 			}
 			if got.Version != tc.wantVersion {
 				t.Errorf("Version: want %q, got %q", tc.wantVersion, got.Version)

@@ -41,7 +41,7 @@ var (
 	somePeer = &pdppb.Peer{Cn: "svc-a", Auid: "ap12345", Uri: "spiffe://prod/svc-a"}
 	someJWT  = makeJWT(map[string]any{"sub": "alice", "scopes": []any{"viewer"}})
 	adminJWT = makeJWT(map[string]any{"sub": "admin", "scopes": []any{"order:admin"}})
-	someOp   = &pdppb.Operation{Id: "Order_Get", Scope: "orders", Version: "v1"}
+	someOp   = &pdppb.Operation{Id: "Order_Get", Api: "orders", Version: "v1"}
 	emptyOp  = &pdppb.Operation{}
 )
 
